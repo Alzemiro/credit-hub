@@ -23,6 +23,8 @@ Para resolver problemas de dupla escrita, o sistema adota o padrão Transactiona
 - PostgreSQL
 - Apache Kafka + Confluent Schema Registry (Avro)
 - Docker Compose & WireMock (Para stubs)
+- Observabilidade: Jaeger, OpenTelemetry Collector, Prometheus e Micrometer
+- Testes de Carga: Grafana k6
 
 ## Como executar
 1. Suba a infraestrutura necessária (Postgres, Kafka, Schema Registry, WireMock):
@@ -51,3 +53,4 @@ Para resolver problemas de dupla escrita, o sistema adota o padrão Transactiona
 - [x] Sprint 1-3: Espinha síncrona com Virtual Threads, Scatter-Gather e resiliência com Resilience4j
 - [x] Sprint 4: Adicionado Transactional Outbox ao credit-query-service e serviço idempotente audit-service consumindo Kafka + Schema Registry.
 - [x] Sprint 5: Criado decision-consumer com @RetryableTopic (retries não-bloqueantes com backoff) + persistência de Dead Letter Topic (DLT) no banco.
+- [x] Sprint 6: Observabilidade (Tracing OTLP, Jaeger SPM e Prometheus) e automação de Testes de Carga (k6).
