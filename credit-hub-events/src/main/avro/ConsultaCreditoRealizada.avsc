@@ -1,0 +1,30 @@
+{
+  "namespace": "com.credithub.consulta.event",
+  "type": "record",
+  "name": "ConsultaCreditoRealizada",
+  "fields": [
+    {
+      "name": "queryId",
+      "type": "string"
+    },
+    {
+      "name": "cpf",
+      "type": "string"
+    },
+    {
+      "name": "timestamp",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "bureausConsultados",
+      "type": "int"
+    },
+    {
+      "name": "confianca",
+      "type": "string"
+    }
+  ]
+}

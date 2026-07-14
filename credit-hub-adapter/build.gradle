@@ -6,6 +6,7 @@ plugins {
 dependencies {
     implementation project(':credit-hub-domain')
     implementation project(':credit-hub-application')
+    implementation project(':credit-hub-events')
 
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -13,5 +14,6 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-aop'
     implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
+    implementation 'io.confluent:kafka-avro-serializer:7.6.0'
     runtimeOnly 'org.postgresql:postgresql'
 }

@@ -1,0 +1,13 @@
+plugins {
+    id 'java'
+    id 'com.github.davidmc24.gradle.plugin.avro'
+}
+
+dependencies {
+    implementation 'org.apache.avro:avro:1.11.3'
+}
+
+// Generate Avro java classes from .avsc files
+avro {
+    stringType = "String"
+}

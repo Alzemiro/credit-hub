@@ -2,10 +2,22 @@ server:
   port: 8083   # 8080/8081/8082 já ocupados por kafka-ui/schema-registry/wiremock
 
 spring:
+  application:
+    name: credit-query-service
   datasource:
     url: jdbc:postgresql://localhost:5432/credithub
     username: credithub
     password: credithub
+  jpa:
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+      properties:
+        schema.registry.url: http://localhost:8081
 
 # Todos apontam pro mesmo WireMock; o path é que distingue o bureau (formatos diferentes).
 bureau:
@@ -21,10 +33,16 @@ consulta:
 
 # Expõe os endpoints do Resilience4j no Actuator (ver estado do breaker etc.)
 management:
+  tracing:
+    sampling:
+      probability: 1.0 # Em produção seria 1-10%
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces
   endpoints:
     web:
       exposure:
-        include: health,circuitbreakers,circuitbreakerevents,retries,retryevents,bulkheads
+        include: health,circuitbreakers,circuitbreakerevents,retries,retryevents,bulkheads,prometheus
   endpoint:
     health:
       show-details: always   # sem isso, /actuator/health não mostra o detalhe do breaker
