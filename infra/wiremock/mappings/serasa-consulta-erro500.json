@@ -1,0 +1,21 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/consultas",
+    "bodyPatterns": [
+      { "matchesJsonPath": "$.[?(@.cpf == '00000000000')]" }
+    ]
+  },
+  "response": {
+    "status": 500,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "erro": "INTERNAL_ERROR",
+      "mensagem": "Falha interna no bureau Serasa",
+      "timestamp": "2026-07-14T10:15:30Z"
+    }
+  }
+}

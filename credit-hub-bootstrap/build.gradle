@@ -1,0 +1,10 @@
+// Módulo executável: liga tudo e sobe o Spring Boot.
+apply plugin: 'org.springframework.boot'
+
+dependencies {
+    implementation project(':credit-hub-domain')
+    implementation project(':credit-hub-application')
+    implementation project(':credit-hub-adapter')
+
+    implementation 'org.springframework.boot:spring-boot-starter'
+}

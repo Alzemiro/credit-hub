@@ -1,0 +1,81 @@
+server:
+  port: 8083   # 8080/8081/8082 já ocupados por kafka-ui/schema-registry/wiremock
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/credithub
+    username: credithub
+    password: credithub
+
+# Todos apontam pro mesmo WireMock; o path é que distingue o bureau (formatos diferentes).
+bureau:
+  serasa:
+    base-url: http://localhost:8082
+  quod:
+    base-url: http://localhost:8082
+  boavista:
+    base-url: http://localhost:8082
+
+consulta:
+  deadline-ms: 3000   # deadline GLOBAL do scatter-gather: bureau que não responder em 3s vira "indisponível"
+
+# Expõe os endpoints do Resilience4j no Actuator (ver estado do breaker etc.)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,circuitbreakers,circuitbreakerevents,retries,retryevents,bulkheads
+  endpoint:
+    health:
+      show-details: always   # sem isso, /actuator/health não mostra o detalhe do breaker
+  health:
+    circuitbreakers:
+      enabled: true          # injeta o estado do circuit breaker dentro do /actuator/health
+
+# Um config "default" e 3 instances (uma por bureau) que herdam dele via base-config.
+# TimeLimiter saiu: o tempo agora é responsabilidade do deadline global do scatter-gather.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        register-health-indicator: true          # publica o breaker no /actuator/health
+        sliding-window-type: COUNT_BASED          # janela conta N chamadas (não N segundos)
+        sliding-window-size: 10                   # avalia a taxa de falha sobre as últimas 10 chamadas
+        minimum-number-of-calls: 5                # só calcula taxa após 5 chamadas (evita abrir com 1 erro)
+        failure-rate-threshold: 50                # >= 50% de falha na janela -> abre o circuito
+        wait-duration-in-open-state: 10s          # tempo em OPEN antes de testar de novo (HALF_OPEN)
+        permitted-number-of-calls-in-half-open-state: 3  # nº de chamadas de teste em HALF_OPEN
+        automatic-transition-from-open-to-half-open-enabled: true  # vai p/ HALF_OPEN sozinho
+        record-exceptions:                        # o que CONTA como falha para o breaker
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+    instances:
+      serasa: { base-config: default }
+      quod: { base-config: default }
+      boavista: { base-config: default }
+  retry:
+    configs:
+      default:
+        max-attempts: 3                    # 1 tentativa + 2 retries
+        wait-duration: 300ms               # base do backoff entre tentativas
+        enable-exponential-backoff: true   # espera cresce: 300ms, 600ms, 1.2s...
+        exponential-backoff-multiplier: 2  # fator de crescimento do backoff
+        enable-randomized-wait: true       # jitter: espalha as tentativas p/ evitar thundering herd
+        randomized-wait-factor: 0.5        # +/-50% de aleatoriedade sobre o tempo do backoff
+        retry-exceptions:                  # o que dispara nova tentativa
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+    instances:
+      serasa: { base-config: default }
+      quod: { base-config: default }
+      boavista: { base-config: default }
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 8   # máx. de chamadas SIMULTÂNEAS por bureau; cada instance tem seu próprio
+                                  # semáforo, então um bureau saturado não consome a capacidade dos outros
+        max-wait-duration: 0ms    # não espera por permit: se estourar o limite -> BulkheadFullException na hora
+    instances:
+      serasa: { base-config: default }    # semáforo isolado da serasa
+      quod: { base-config: default }      # semáforo isolado da quod
+      boavista: { base-config: default }  # semáforo isolado da boavista

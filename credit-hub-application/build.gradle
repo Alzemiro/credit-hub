@@ -1,0 +1,4 @@
+// Casos de uso e portas. Depende só do domínio.
+dependencies {
+    implementation project(':credit-hub-domain')
+}

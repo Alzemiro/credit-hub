@@ -1,0 +1,28 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "urlPath": "/quod/score",
+    "bodyPatterns": [
+      { "matchesJsonPath": "$.[?(@.documento == '11111111111')]" }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "fixedDelayMilliseconds": 8000,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "documento": "11111111111",
+      "nome_completo": "JOAO LENTO SOUZA",
+      "pontuacao": 640,
+      "classe_risco": "C",
+      "status_documento": "REGULAR",
+      "dividas": {
+        "tem_pendencia": false,
+        "valor": 0.00
+      }
+    }
+  }
+}

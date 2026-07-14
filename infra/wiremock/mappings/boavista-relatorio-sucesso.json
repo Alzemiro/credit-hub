@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/boavista/v1/relatorio"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "cpf": "12345678909",
+      "consumer": {
+        "name": "MARIA SILVA SOUZA"
+      },
+      "creditScore": {
+        "points": 690,
+        "band": "MEDIO"
+      },
+      "registration": "REGULAR",
+      "debts": {
+        "hasDebt": false,
+        "total": 0.00,
+        "count": 0
+      }
+    }
+  }
+}

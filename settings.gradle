@@ -1,0 +1,6 @@
+rootProject.name = 'credit-hub'
+
+include 'credit-hub-domain'
+include 'credit-hub-application'
+include 'credit-hub-adapter'
+include 'credit-hub-bootstrap'
