@@ -14,6 +14,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
+import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -44,7 +45,7 @@ public class DecisionConsumerTest {
         ConsultaCreditoRealizada poison = ConsultaCreditoRealizada.newBuilder()
                 .setQueryId("q-poison")
                 .setCpf("99999999999")
-                .setTimestamp(System.currentTimeMillis())
+                .setTimestamp(Instant.now())
                 .setBureausConsultados(3)
                 .setConfianca("COMPLETA")
                 .build();
@@ -53,7 +54,7 @@ public class DecisionConsumerTest {
         ConsultaCreditoRealizada valid = ConsultaCreditoRealizada.newBuilder()
                 .setQueryId("q-valid")
                 .setCpf("12345678909")
-                .setTimestamp(System.currentTimeMillis())
+                .setTimestamp(Instant.now())
                 .setBureausConsultados(3)
                 .setConfianca("COMPLETA")
                 .build();

@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 
 @Component
@@ -32,7 +33,7 @@ public class OutboxRelay {
 
     @Scheduled(fixedDelay = 2000)
     public void processOutbox() {
-        List<OutboxEntity> events = repository.findAll();
+        List<OutboxEntity> events = repository.findAllByOrderByCreatedAtAsc();
         if (events.isEmpty()) {
             return;
         }
@@ -45,12 +46,12 @@ public class OutboxRelay {
                     ConsultaCreditoRealizada avroEvent = ConsultaCreditoRealizada.newBuilder()
                             .setQueryId(entity.getEventId())
                             .setCpf(node.path("cpf").asText())
-                            .setTimestamp(System.currentTimeMillis())
+                            .setTimestamp(Instant.now())   // Avro timestamp-millis -> java.time.Instant
                             .setBureausConsultados(node.path("respostas").size() + node.path("indisponiveis").size())
                             .setConfianca(node.path("confianca").asText())
                             .build();
 
-                    kafkaTemplate.send("consulta-credito-event", entity.getEventId(), avroEvent)
+                    kafkaTemplate.send("consulta-credito-event", avroEvent.getCpf().toString(), avroEvent)
                             .whenComplete((result, ex) -> {
                                 if (ex == null) {
                                     repository.delete(entity);

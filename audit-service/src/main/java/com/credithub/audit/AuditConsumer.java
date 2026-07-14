@@ -30,7 +30,7 @@ public class AuditConsumer {
         AuditLogEntity entity = new AuditLogEntity(
                 event.getQueryId(),
                 event.getCpf(),
-                event.getTimestamp(),
+                event.getTimestamp().toEpochMilli(),   // Instant (Avro) -> epoch millis na persistência
                 event.getBureausConsultados(),
                 event.getConfianca()
         );

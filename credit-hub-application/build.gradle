@@ -1,4 +1,10 @@
-// Casos de uso e portas. Depende só do domínio.
+// Casos de uso e portas. Depende do domínio.
+// EXCEÇÃO CONSCIENTE à pureza framework-free (ver DECISIONS.md): o span manual do
+// scatter-gather e a propagação de contexto p/ virtual threads exigem a API do Micrometer.
 dependencies {
     implementation project(':credit-hub-domain')
+
+    // Tracing: API do Tracer/Span + ContextSnapshot (propaga trace-context às virtual threads).
+    implementation 'io.micrometer:micrometer-tracing'
+    implementation 'io.micrometer:context-propagation'
 }
