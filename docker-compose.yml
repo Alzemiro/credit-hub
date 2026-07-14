@@ -79,5 +79,45 @@ services:
       - ./infra/wiremock:/home/wiremock
     command: ["--global-response-templating", "--verbose"]
 
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: credit-hub-prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: credit-hub-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - jaeger
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: credit-hub-jaeger
+    ports:
+      - "16686:16686"
+    environment:
+      - METRICS_STORAGE_TYPE=prometheus
+      - PROMETHEUS_SERVER_URL=http://prometheus:9090
+      - PROMETHEUS_QUERY_SUPPORT_SPANMETRICS_CONNECTOR=true
+      - PROMETHEUS_QUERY_NORMALIZE_CALLS=true
+      - PROMETHEUS_QUERY_NORMALIZE_DURATION=true
+
+  k6:
+    image: grafana/k6:0.52.0
+    container_name: credit-hub-k6
+    profiles: ["manual"]
+    volumes:
+      - ./load:/scripts
+
 volumes:
   postgres-data:

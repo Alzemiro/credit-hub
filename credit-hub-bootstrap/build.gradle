@@ -7,4 +7,9 @@ dependencies {
     implementation project(':credit-hub-adapter')
 
     implementation 'org.springframework.boot:spring-boot-starter'
+
+    // Tracing: exporta spans via OTLP p/ Jaeger. Versões pelo BOM do Boot (não pinar).
+    implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
 }

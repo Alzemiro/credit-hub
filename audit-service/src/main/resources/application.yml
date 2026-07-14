@@ -2,6 +2,8 @@ server:
   port: 8084
 
 spring:
+  application:
+    name: audit-service
   datasource:
     url: jdbc:postgresql://localhost:5432/credithub
     username: credithub
@@ -19,3 +21,15 @@ spring:
       properties:
         schema.registry.url: http://localhost:8081
         specific.avro.reader: true
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0 # Em produção seria 1-10%
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
