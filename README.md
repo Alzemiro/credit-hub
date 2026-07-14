@@ -14,6 +14,7 @@ Para resolver problemas de dupla escrita, o sistema adota o padrão Transactiona
 - **credit-hub-bootstrap**: Configuração, entry point e wiring dos módulos.
 - **credit-hub-events**: Contratos e esquemas Avro compartilhados.
 - **audit-service**: Serviço consumidor idempotente, responsável por manter a trilha de auditoria.
+- **decision-consumer**: Consumidor de regras de negócio com resiliência baseada em @RetryableTopic (non-blocking retries) e envio para Dead Letter Topic (DLT) persistida em banco de dados.
 
 ## Tecnologias e Infraestrutura
 - Java 21 + Virtual Threads
@@ -40,8 +41,13 @@ Para resolver problemas de dupla escrita, o sistema adota o padrão Transactiona
    ```bash
    ./gradlew :audit-service:bootRun
    ```
+5. Em outra aba de terminal, execute o `decision-consumer`:
+   ```bash
+   ./gradlew :decision-consumer:bootRun
+   ```
 
 ## Roadmap
 
 - [x] Sprint 1-3: Espinha síncrona com Virtual Threads, Scatter-Gather e resiliência com Resilience4j
 - [x] Sprint 4: Adicionado Transactional Outbox ao credit-query-service e serviço idempotente audit-service consumindo Kafka + Schema Registry.
+- [x] Sprint 5: Criado decision-consumer com @RetryableTopic (retries não-bloqueantes com backoff) + persistência de Dead Letter Topic (DLT) no banco.

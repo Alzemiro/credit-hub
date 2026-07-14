@@ -10,7 +10,7 @@ Hub interno de consulta a bureaus de crédito (Serasa/Quod/BoaVista). Duas espin
 
 Decisão central: **não forçar Kafka no caminho síncrono** — a consulta responde ao chamador sem depender do broker; o que é assíncrono sai por Outbox.
 
-> ⚠️ **Estado atual vs. alvo.** O hot path está implementado com **scatter-gather nos 3 bureaus (Serasa/Quod/BoaVista)** sob deadline global. A **Espinha assíncrona** foi implementada via **Transactional Outbox**, produtor Kafka e eventos (Avro + Schema Registry). O `audit-service` consome de forma idempotente.
+> ⚠️ **Estado atual vs. alvo.** O hot path está implementado com scatter-gather nos 3 bureaus sob deadline global. A **Espinha assíncrona** foi implementada via Transactional Outbox, produtor Kafka e eventos (Avro + Schema Registry). Há dois consumidores independentes: o `audit-service` (idempotente) e o `decision-consumer` (validação de regras de negócio, com `@RetryableTopic` não-bloqueante e DLT persistida no Postgres).
 
 ## Stack
 
@@ -65,8 +65,9 @@ docker compose up -d
 # App — precisa de Postgres de pé e do WireMock p/ o bureau
 ./gradlew :credit-hub-bootstrap:bootRun
 
-# Em outro terminal: App do Audit Service p/ consumir kafka
+# Em outros terminais: Apps que consomem os eventos do Kafka
 ./gradlew :audit-service:bootRun
+./gradlew :decision-consumer:bootRun
 
 # Build completo / testes
 ./gradlew build
@@ -85,10 +86,18 @@ curl -s -X POST http://localhost:8083/consultas -H "Content-Type: application/js
 curl -s -X POST http://localhost:8083/consultas -H "Content-Type: application/json" -d '{"cpf":"00000000000"}'
 ```
 
+Testar a resiliência assíncrona (Retry + DLT no decision-consumer):
+O CPF `99999999999` força uma `IllegalArgumentException` no consumidor, disparando retentativas e indo pro banco na tabela `decision_dlt`.
+```bash
+curl -s -X POST http://localhost:8083/consultas -H "Content-Type: application/json" -d '{"cpf":"99999999999"}'
+# Confirme no Postgres: docker exec -it credit-hub-postgres psql -U credithub -d credithub -c "SELECT * FROM decision_dlt;"
+```
+
 | Serviço | URL |
 |---|---|
 | App (`POST /consultas`) | http://localhost:8083 |
 | Audit Service           | http://localhost:8084 |
+| Decision Consumer       | http://localhost:8085 |
 | Actuator (breaker) | `/actuator/circuitbreakers`, `/actuator/circuitbreakerevents/serasa`, `/actuator/health` |
 | Kafka UI | http://localhost:8080 |
 | Schema Registry | http://localhost:8081 |
