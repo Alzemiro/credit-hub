@@ -75,30 +75,19 @@ resource "azurerm_key_vault_access_policy" "kv_aca" {
   ]
 }
 
-resource "azurerm_key_vault_secret" "kafka_api_key" {
-  name         = "kafka-api-key"
-  value        = confluent_api_key.app_kafka_api_key.id
+# Guardamos no KV os valores JÁ COMPOSTOS que as apps consomem (não os componentes crus):
+# o Container App referencia estes secrets via key_vault_secret_id (ver azure_aca.tf), então o
+# KV é a fonte real dos segredos — não mais recurso órfão.
+resource "azurerm_key_vault_secret" "kafka_jaas" {
+  name         = "kafka-jaas"
+  value        = "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"${confluent_api_key.app_kafka_api_key.id}\" password=\"${confluent_api_key.app_kafka_api_key.secret}\";"
   key_vault_id = azurerm_key_vault.kv.id
   depends_on   = [azurerm_key_vault_access_policy.kv_admin]
 }
 
-resource "azurerm_key_vault_secret" "kafka_api_secret" {
-  name         = "kafka-api-secret"
-  value        = confluent_api_key.app_kafka_api_key.secret
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault_access_policy.kv_admin]
-}
-
-resource "azurerm_key_vault_secret" "sr_api_key" {
-  name         = "sr-api-key"
-  value        = confluent_api_key.app_sr_api_key.id
-  key_vault_id = azurerm_key_vault.kv.id
-  depends_on   = [azurerm_key_vault_access_policy.kv_admin]
-}
-
-resource "azurerm_key_vault_secret" "sr_api_secret" {
-  name         = "sr-api-secret"
-  value        = confluent_api_key.app_sr_api_key.secret
+resource "azurerm_key_vault_secret" "sr_auth" {
+  name         = "sr-auth"
+  value        = "${confluent_api_key.app_sr_api_key.id}:${confluent_api_key.app_sr_api_key.secret}"
   key_vault_id = azurerm_key_vault.kv.id
   depends_on   = [azurerm_key_vault_access_policy.kv_admin]
 }

@@ -35,6 +35,82 @@ resource "azurerm_container_app_environment_storage" "wiremock_storage" {
   access_mode                  = "ReadOnly"
 }
 
+# --- OTel Collector (recebe OTLP das apps, exporta traces p/ App Insights) ---
+resource "azurerm_storage_share" "otel" {
+  name                 = "otel-config"
+  storage_account_name = azurerm_storage_account.sa.name
+  quota                = 1
+}
+
+resource "azurerm_storage_share_file" "otel_config" {
+  name             = "config.yaml"
+  storage_share_id = azurerm_storage_share.otel.id
+  source           = "${path.module}/../otel/otel-collector-config.cloud.yaml"
+}
+
+resource "azurerm_container_app_environment_storage" "otel_storage" {
+  name                         = "otelstorage"
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  account_name                 = azurerm_storage_account.sa.name
+  share_name                   = azurerm_storage_share.otel.name
+  access_key                   = azurerm_storage_account.sa.primary_access_key
+  access_mode                  = "ReadOnly"
+}
+
+resource "azurerm_container_app" "otel_collector" {
+  name                         = "${var.prefix}-otel"
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  resource_group_name          = azurerm_resource_group.rg.name
+  revision_mode                = "Single"
+
+  # A connection string do App Insights e o unico segredo do collector; nao passa pelo KV
+  # (e um output de recurso TF, nao uma credencial que o usuario digita).
+  secret {
+    name  = "appinsights-connection"
+    value = azurerm_application_insights.app_insights.connection_string
+  }
+
+  ingress {
+    external_enabled = false   # interno: so as apps do mesmo environment falam com ele
+    target_port      = 4318    # OTLP/HTTP (o exporter do micrometer usa http/protobuf em /v1/traces)
+    transport        = "http"
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+  }
+
+  template {
+    container {
+      name   = "otel-collector"
+      image  = "otel/opentelemetry-collector-contrib:0.104.0"
+      cpu    = 0.5
+      memory = "1Gi"
+      # args (nao command): a imagem tem ENTRYPOINT no binario do collector; passamos so a flag.
+      args   = ["--config=/etc/otel/config.yaml"]
+
+      env {
+        name        = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        secret_name = "appinsights-connection"
+      }
+
+      volume_mounts {
+        name = "otel-config-vol"
+        path = "/etc/otel"
+      }
+    }
+
+    volume {
+      name         = "otel-config-vol"
+      storage_name = azurerm_container_app_environment_storage.otel_storage.name
+      storage_type = "AzureFile"
+    }
+
+    min_replicas = 1
+    max_replicas = 1
+  }
+}
+
 # --- Wiremock ---
 resource "azurerm_container_app" "wiremock" {
   name                         = "${var.prefix}-wiremock"
@@ -58,7 +134,10 @@ resource "azurerm_container_app" "wiremock" {
       image  = "wiremock/wiremock:3.9.1"
       cpu    = 0.5
       memory = "1Gi"
-      command = ["--global-response-templating", "--verbose"]
+      # args (não command): a imagem do WireMock tem ENTRYPOINT java -jar; estas são as flags
+      # passadas a ele. Usar `command` sobrescreveria o ENTRYPOINT e tentaria executar
+      # "--global-response-templating" como binário (crash loop).
+      args   = ["--global-response-templating", "--verbose"]
 
       volume_mounts {
         name = "mappings-vol"
@@ -85,8 +164,21 @@ resource "azurerm_container_app" "wiremock" {
 locals {
   spring_env = [
     {
+      # B1ms: max_connections=50, Azure reserva ~15 => ~35 uteis.
+      # Todas as apps rodam min=max=1 replica (query-service pelo OutboxRelay; audit/decision
+      # porque nao ha KEDA scale rule, entao >1 seria inerte). Pior caso: 3 replicas * 8 = 24 <= 35.
       name  = "SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE"
-      value = "8" # B1ms max_conn=50. Azure reserva 15 = 35 uteis. 3 apps * 8 = 24.
+      value = "8"
+    },
+    {
+      # Traces vao para o OTel Collector (container app), que faz fan-out p/ o exporter azuremonitor
+      # (App Insights). App mantem a instrumentacao OTLP atual; so muda o endpoint de push.
+      name  = "MANAGEMENT_OTLP_TRACING_ENDPOINT"
+      value = "http://${azurerm_container_app.otel_collector.ingress[0].fqdn}/v1/traces"
+    },
+    {
+      name  = "MANAGEMENT_TRACING_SAMPLING_PROBABILITY"
+      value = "1.0"
     },
     {
       name  = "SPRING_KAFKA_BOOTSTRAP_SERVERS"
@@ -137,7 +229,10 @@ resource "azurerm_container_app" "query_service" {
   container_app_environment_id = azurerm_container_app_environment.env.id
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
-  
+
+  # A UAI precisa ter acesso de leitura ao KV antes da app tentar resolver os secrets.
+  depends_on = [azurerm_key_vault_access_policy.kv_aca]
+
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
@@ -148,19 +243,23 @@ resource "azurerm_container_app" "query_service" {
     identity = azurerm_user_assigned_identity.aca_identity.id
   }
 
+  # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
   secret {
-    name  = "kafka-jaas"
-    value = "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"${confluent_api_key.app_kafka_api_key.id}\" password=\"${confluent_api_key.app_kafka_api_key.secret}\";"
+    name                = "kafka-jaas"
+    key_vault_secret_id = azurerm_key_vault_secret.kafka_jaas.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   secret {
-    name  = "sr-auth"
-    value = "${confluent_api_key.app_sr_api_key.id}:${confluent_api_key.app_sr_api_key.secret}"
+    name                = "sr-auth"
+    key_vault_secret_id = azurerm_key_vault_secret.sr_auth.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   secret {
-    name  = "pg-password"
-    value = var.postgres_admin_password
+    name                = "pg-password"
+    key_vault_secret_id = azurerm_key_vault_secret.pg_password.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   ingress {
@@ -176,7 +275,9 @@ resource "azurerm_container_app" "query_service" {
   template {
     container {
       name   = "credit-query-service"
-      image  = "${azurerm_container_registry.acr.login_server}/credit-query-service:latest"
+      # Placeholder publico: no 1o apply o ACR esta vazio e a imagem real ainda nao existe.
+      # O CD (deploy.yml) troca pela imagem real; o ignore_changes abaixo impede o TF de reverter.
+      image  = "mcr.microsoft.com/k8se/quickstart:latest"
       cpu    = 0.5
       memory = "1Gi"
 
@@ -191,7 +292,7 @@ resource "azurerm_container_app" "query_service" {
       
       env {
         name  = "SPRING_DATASOURCE_URL"
-        value = "jdbc:postgresql://${azurerm_postgresql_flexible_server.pg.fqdn}:5432/credithub"
+        value = "jdbc:postgresql://${azurerm_postgresql_flexible_server.pg.fqdn}:5432/credithub?sslmode=require"
       }
       env {
         name  = "SPRING_DATASOURCE_USERNAME"
@@ -234,7 +335,9 @@ resource "azurerm_container_app" "audit_service" {
   container_app_environment_id = azurerm_container_app_environment.env.id
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
-  
+
+  depends_on = [azurerm_key_vault_access_policy.kv_aca]
+
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
@@ -245,25 +348,30 @@ resource "azurerm_container_app" "audit_service" {
     identity = azurerm_user_assigned_identity.aca_identity.id
   }
 
+  # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
   secret {
-    name  = "kafka-jaas"
-    value = "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"${confluent_api_key.app_kafka_api_key.id}\" password=\"${confluent_api_key.app_kafka_api_key.secret}\";"
+    name                = "kafka-jaas"
+    key_vault_secret_id = azurerm_key_vault_secret.kafka_jaas.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   secret {
-    name  = "sr-auth"
-    value = "${confluent_api_key.app_sr_api_key.id}:${confluent_api_key.app_sr_api_key.secret}"
+    name                = "sr-auth"
+    key_vault_secret_id = azurerm_key_vault_secret.sr_auth.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   secret {
-    name  = "pg-password"
-    value = var.postgres_admin_password
+    name                = "pg-password"
+    key_vault_secret_id = azurerm_key_vault_secret.pg_password.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   template {
     container {
       name   = "audit-service"
-      image  = "${azurerm_container_registry.acr.login_server}/audit-service:latest"
+      # Placeholder publico (ver credit-query-service): CD assume a imagem real depois.
+      image  = "mcr.microsoft.com/k8se/quickstart:latest"
       cpu    = 0.5
       memory = "1Gi"
 
@@ -278,7 +386,7 @@ resource "azurerm_container_app" "audit_service" {
 
       env {
         name  = "SPRING_DATASOURCE_URL"
-        value = "jdbc:postgresql://${azurerm_postgresql_flexible_server.pg.fqdn}:5432/audit"
+        value = "jdbc:postgresql://${azurerm_postgresql_flexible_server.pg.fqdn}:5432/audit?sslmode=require"
       }
       env {
         name  = "SPRING_DATASOURCE_USERNAME"
@@ -301,8 +409,10 @@ resource "azurerm_container_app" "audit_service" {
       }
     }
 
+    # Sem KEDA scale rule (consumer nao tem ingress HTTP), entao >1 replica ficaria ociosa.
+    # Fixado em 1 tambem por orcamento de conexoes do B1ms (ver pool size no locals.spring_env).
     min_replicas = 1
-    max_replicas = 2
+    max_replicas = 1
   }
 
   lifecycle {
@@ -316,7 +426,9 @@ resource "azurerm_container_app" "decision_consumer" {
   container_app_environment_id = azurerm_container_app_environment.env.id
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
-  
+
+  depends_on = [azurerm_key_vault_access_policy.kv_aca]
+
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
@@ -327,25 +439,30 @@ resource "azurerm_container_app" "decision_consumer" {
     identity = azurerm_user_assigned_identity.aca_identity.id
   }
 
+  # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
   secret {
-    name  = "kafka-jaas"
-    value = "org.apache.kafka.common.security.plain.PlainLoginModule required username=\"${confluent_api_key.app_kafka_api_key.id}\" password=\"${confluent_api_key.app_kafka_api_key.secret}\";"
+    name                = "kafka-jaas"
+    key_vault_secret_id = azurerm_key_vault_secret.kafka_jaas.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   secret {
-    name  = "sr-auth"
-    value = "${confluent_api_key.app_sr_api_key.id}:${confluent_api_key.app_sr_api_key.secret}"
+    name                = "sr-auth"
+    key_vault_secret_id = azurerm_key_vault_secret.sr_auth.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   secret {
-    name  = "pg-password"
-    value = var.postgres_admin_password
+    name                = "pg-password"
+    key_vault_secret_id = azurerm_key_vault_secret.pg_password.id
+    identity            = azurerm_user_assigned_identity.aca_identity.id
   }
 
   template {
     container {
       name   = "decision-consumer"
-      image  = "${azurerm_container_registry.acr.login_server}/decision-consumer:latest"
+      # Placeholder publico (ver credit-query-service): CD assume a imagem real depois.
+      image  = "mcr.microsoft.com/k8se/quickstart:latest"
       cpu    = 0.5
       memory = "1Gi"
 
@@ -360,7 +477,7 @@ resource "azurerm_container_app" "decision_consumer" {
 
       env {
         name  = "SPRING_DATASOURCE_URL"
-        value = "jdbc:postgresql://${azurerm_postgresql_flexible_server.pg.fqdn}:5432/decision"
+        value = "jdbc:postgresql://${azurerm_postgresql_flexible_server.pg.fqdn}:5432/decision?sslmode=require"
       }
       env {
         name  = "SPRING_DATASOURCE_USERNAME"
@@ -387,8 +504,10 @@ resource "azurerm_container_app" "decision_consumer" {
       }
     }
 
+    # Sem KEDA scale rule (consumer nao tem ingress HTTP), entao >1 replica ficaria ociosa.
+    # Fixado em 1 tambem por orcamento de conexoes do B1ms (ver pool size no locals.spring_env).
     min_replicas = 1
-    max_replicas = 2
+    max_replicas = 1
   }
 
   lifecycle {

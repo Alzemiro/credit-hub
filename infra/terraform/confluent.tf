@@ -172,7 +172,10 @@ resource "confluent_kafka_topic" "topics" {
     id = confluent_kafka_cluster.basic.id
   }
   topic_name    = each.key
-  partitions_count = 1
+  # Topico principal com 6 particoes: (a) habilita paralelismo real de consumers no futuro
+  # (via KEDA Kafka scaler); (b) da sentido a chave de particao por CPF (ordenacao por documento
+  # so importa com >1 particao). Retry/DLT ficam com 1 (baixo volume, ordenacao irrelevante).
+  partitions_count = each.key == "consulta-credito-event" ? 6 : 1
   rest_endpoint = confluent_kafka_cluster.basic.rest_endpoint
   credentials {
     key    = confluent_api_key.app_kafka_api_key.id
