@@ -28,7 +28,9 @@ jobs:
           cache: 'gradle'
           
       - name: Build and Test
-        run: ./gradlew build
+        run: |
+          chmod +x gradlew
+          ./gradlew build
 
   docker-build-push-deploy:
     needs: build-and-test
@@ -50,6 +52,8 @@ jobs:
         run: |
           TAG=${GITHUB_SHA}
           ACR=${{ secrets.ACR_NAME }}.azurecr.io
+          
+          chmod +x gradlew
           
           # Using spring-boot plugin to build OCI images
           ./gradlew :credit-hub-bootstrap:bootBuildImage --imageName=$ACR/credit-query-service:$TAG
