@@ -1,9 +1,5 @@
 resource "confluent_environment" "env" {
   display_name = "${var.prefix}-env"
-
-  stream_governance {
-    package = "ESSENTIALS"
-  }
 }
 
 resource "confluent_kafka_cluster" "basic" {
@@ -22,6 +18,21 @@ resource "confluent_kafka_cluster" "basic" {
 resource "confluent_service_account" "app" {
   display_name = "${var.prefix}-app-sa"
   description  = "Service Account para as aplicacoes Credit Hub"
+}
+
+resource "confluent_api_key" "env_manager_kafka_api_key" {
+  display_name = "${var.prefix}-env-manager-kafka-api-key"
+  description  = "Kafka API Key owned by the terraform runner (Admin) to create topics and ACLs"
+
+  # Não informamos o bloco owner para herdar o usuário atual (OrganizationAdmin)
+  managed_resource {
+    id          = confluent_kafka_cluster.basic.id
+    api_version = confluent_kafka_cluster.basic.api_version
+    kind        = confluent_kafka_cluster.basic.kind
+    environment {
+      id = confluent_environment.env.id
+    }
+  }
 }
 
 resource "confluent_api_key" "app_kafka_api_key" {
@@ -55,8 +66,8 @@ resource "confluent_kafka_acl" "app_read_group" {
   permission    = "ALLOW"
   rest_endpoint = confluent_kafka_cluster.basic.rest_endpoint
   credentials {
-    key    = confluent_api_key.app_kafka_api_key.id
-    secret = confluent_api_key.app_kafka_api_key.secret
+    key    = confluent_api_key.env_manager_kafka_api_key.id
+    secret = confluent_api_key.env_manager_kafka_api_key.secret
   }
 }
 
@@ -73,8 +84,8 @@ resource "confluent_kafka_acl" "app_write_group" {
   permission    = "ALLOW"
   rest_endpoint = confluent_kafka_cluster.basic.rest_endpoint
   credentials {
-    key    = confluent_api_key.app_kafka_api_key.id
-    secret = confluent_api_key.app_kafka_api_key.secret
+    key    = confluent_api_key.env_manager_kafka_api_key.id
+    secret = confluent_api_key.env_manager_kafka_api_key.secret
   }
 }
 
@@ -91,8 +102,8 @@ resource "confluent_kafka_acl" "app_read_topic" {
   permission    = "ALLOW"
   rest_endpoint = confluent_kafka_cluster.basic.rest_endpoint
   credentials {
-    key    = confluent_api_key.app_kafka_api_key.id
-    secret = confluent_api_key.app_kafka_api_key.secret
+    key    = confluent_api_key.env_manager_kafka_api_key.id
+    secret = confluent_api_key.env_manager_kafka_api_key.secret
   }
 }
 
@@ -109,8 +120,8 @@ resource "confluent_kafka_acl" "app_write_topic" {
   permission    = "ALLOW"
   rest_endpoint = confluent_kafka_cluster.basic.rest_endpoint
   credentials {
-    key    = confluent_api_key.app_kafka_api_key.id
-    secret = confluent_api_key.app_kafka_api_key.secret
+    key    = confluent_api_key.env_manager_kafka_api_key.id
+    secret = confluent_api_key.env_manager_kafka_api_key.secret
   }
 }
 
@@ -127,16 +138,25 @@ resource "confluent_kafka_acl" "app_create_topic" {
   permission    = "ALLOW"
   rest_endpoint = confluent_kafka_cluster.basic.rest_endpoint
   credentials {
-    key    = confluent_api_key.app_kafka_api_key.id
-    secret = confluent_api_key.app_kafka_api_key.secret
+    key    = confluent_api_key.env_manager_kafka_api_key.id
+    secret = confluent_api_key.env_manager_kafka_api_key.secret
   }
 }
 
-data "confluent_schema_registry_cluster" "sr" {
+data "confluent_schema_registry_region" "sr_region" {
+  cloud   = "AZURE"
+  region  = var.location
+  package = "ESSENTIALS"
+}
+
+resource "confluent_schema_registry_cluster" "sr" {
+  package = data.confluent_schema_registry_region.sr_region.package
   environment {
     id = confluent_environment.env.id
   }
-  depends_on = [confluent_kafka_cluster.basic]
+  region {
+    id = data.confluent_schema_registry_region.sr_region.id
+  }
 }
 
 resource "confluent_api_key" "app_sr_api_key" {
@@ -148,9 +168,9 @@ resource "confluent_api_key" "app_sr_api_key" {
     kind        = confluent_service_account.app.kind
   }
   managed_resource {
-    id          = data.confluent_schema_registry_cluster.sr.id
-    api_version = data.confluent_schema_registry_cluster.sr.api_version
-    kind        = data.confluent_schema_registry_cluster.sr.kind
+    id          = confluent_schema_registry_cluster.sr.id
+    api_version = confluent_schema_registry_cluster.sr.api_version
+    kind        = confluent_schema_registry_cluster.sr.kind
     environment {
       id = confluent_environment.env.id
     }
@@ -178,8 +198,8 @@ resource "confluent_kafka_topic" "topics" {
   partitions_count = each.key == "consulta-credito-event" ? 6 : 1
   rest_endpoint = confluent_kafka_cluster.basic.rest_endpoint
   credentials {
-    key    = confluent_api_key.app_kafka_api_key.id
-    secret = confluent_api_key.app_kafka_api_key.secret
+    key    = confluent_api_key.env_manager_kafka_api_key.id
+    secret = confluent_api_key.env_manager_kafka_api_key.secret
   }
   depends_on = [
     confluent_kafka_acl.app_create_topic,
