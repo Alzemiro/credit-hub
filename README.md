@@ -81,6 +81,74 @@ A infraestrutura foi automatizada e separada da entrega do código da seguinte f
 3. **Autenticação OIDC (Sem Senhas)**:
    O GitHub Actions se comunica com o Azure através do Microsoft Entra ID usando **OIDC (OpenID Connect)**. Nenhuma senha de *Service Principal* é estocada no GitHub. Os Container Apps puxam segredos diretamente do Azure Key Vault internamente usando identidades gerenciadas.
 
+## Guia de Deploy na Nuvem (Azure & Confluent)
+
+Para colocar essa arquitetura no ar do zero, siga os passos abaixo.
+
+### Passo 1: Autenticação OIDC no Azure (Terminal)
+O GitHub precisa de permissão no seu Azure. Execute os comandos abaixo (em PowerShell ou Bash) para criar o app no Entra ID e vincular ao seu repositório:
+
+```bash
+# 1. Cria a Identidade no Entra ID
+APP_ID=$(az ad app create --display-name "github-actions-credithub" --query appId -o tsv)
+SP_ID=$(az ad sp create --id $APP_ID --query id -o tsv)
+
+# 2. Dá permissão de Contribuidor na Assinatura (para o Terraform provisionar recursos)
+SUB_ID=$(az account show --query id -o tsv)
+az role assignment create --role contributor --subscription $SUB_ID --assignee-object-id $SP_ID --assignee-principal-type ServicePrincipal --scope "/subscriptions/$SUB_ID"
+
+# 3. Cria a credencial federada (OIDC) - Altere os dados do repositório!
+az ad app federated-credential create --id $APP_ID --parameters '{
+  "name": "credithub-github-actions",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:<SEU_USER>/<SEU_REPO>:ref:refs/heads/main",
+  "description": "Permite deploy via GitHub Actions",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+
+# 4. Pegue os IDs para cadastrar no GitHub:
+echo "Client ID: $APP_ID"
+az account show --query '{TenantID:tenantId, SubscriptionID:id}' -o json
+```
+> **Nota para PowerShell:** O comando de credencial federada (`az ad app federated-credential create`) pode falhar devido às aspas duplas do JSON. Salve o JSON em um arquivo `params.json` e passe como `--parameters @params.json`.
+
+### Passo 2: Segredos e Variáveis do GitHub (Actions)
+Vá na aba *Settings > Secrets and variables > Actions* do seu repositório e crie os seguintes **Repository Secrets**:
+
+| Secret | Descrição / Onde Obter |
+|---|---|
+| `AZURE_CLIENT_ID` | O Client ID (App ID) gerado no Passo 1. |
+| `AZURE_TENANT_ID` | O Tenant ID da sua conta Azure (Passo 1). |
+| `AZURE_SUBSCRIPTION_ID` | O Subscription ID da sua conta Azure (Passo 1). |
+| `AZURE_RG_NAME` | Nome do Resource Group a ser criado pelo Terraform (ex: `credithub-rg`). |
+| `ACR_NAME` | Nome único global em letras minúsculas para o seu Container Registry (ex: `credithubacr99`). |
+| `PG_PASSWORD` | Senha forte de administrador para o Postgres Flexible Server. |
+| `CONFLUENT_CLOUD_API_KEY` | Key do tipo "Cloud API Key" criada no painel web da Confluent Cloud. |
+| `CONFLUENT_CLOUD_API_SECRET` | Secret emparelhado com a API Key da Confluent. |
+
+### Passo 3: Provisionar a Infraestrutura (Terraform Local)
+Devido ao estado do Terraform estar configurado como **backend local**, o primeiro provisionamento deve ser feito da sua própria máquina (estando previamente autenticado com `az login`).
+
+```bash
+cd infra/terraform
+
+# Exporte as variáveis esperadas pelo Terraform
+export TF_VAR_postgres_admin_password="SuaSenhaForteAqui"
+export CONFLUENT_CLOUD_API_KEY="SuaChave"
+export CONFLUENT_CLOUD_API_SECRET="SeuSecret"
+
+terraform init
+terraform plan
+terraform apply
+```
+
+### Passo 4: Deploy das Aplicações (GitHub Actions)
+Após o Terraform finalizar, sua infraestrutura estará criada, mas os Container Apps estarão rodando uma imagem placeholder da Microsoft. 
+Para injetar o seu código:
+1. Volte ao repositório do GitHub.
+2. Na aba **Actions**, o fluxo de *CI/CD (Build and Deploy to ACA)* provavelmente rodará sozinho a cada push na `main`, ou você pode disparar o workflow "Build and Deploy to ACA" manualmente.
+3. Este fluxo irá utilizar o pacote de build OCI do Spring Boot, empurrará as imagens para o `ACR` recém criado, e forçará o recarregamento dos pods dos Container Apps.
+
 ## Como executar
 1. Suba a infraestrutura necessária (Postgres, Kafka, Schema Registry, WireMock):
    ```bash
