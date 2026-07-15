@@ -16,15 +16,70 @@ Para resolver problemas de dupla escrita, o sistema adota o padrão Transactiona
 - **audit-service**: Serviço consumidor idempotente, responsável por manter a trilha de auditoria.
 - **decision-consumer**: Consumidor de regras de negócio com resiliência baseada em @RetryableTopic (non-blocking retries) e envio para Dead Letter Topic (DLT) persistida em banco de dados.
 
+## Arquitetura Cloud e Diagrama
+
+O sistema foi desenhado para rodar na nuvem utilizando **Azure Container Apps** e **Confluent Cloud** para Kafka. 
+
+```mermaid
+graph TD
+    Client((Client)) -->|POST /consultas| CQS[credit-query-service]
+    
+    subgraph "Azure Container Apps"
+        CQS
+        AUDIT[audit-service]
+        DECISION[decision-consumer]
+        OTEL[otel-collector]
+        WIREMOCK[wiremock]
+    end
+
+    CQS -->|REST Síncrono| WIREMOCK
+    CQS -->|Grava Outbox| DB_CQS[(PG: credithub)]
+    CQS -.->|Outbox Relay| KAFKA
+    
+    KAFKA{Confluent Cloud Kafka}
+    
+    KAFKA -->|Consome Eventos| AUDIT
+    KAFKA -->|Consome Eventos| DECISION
+    
+    AUDIT -->|Idempotência| DB_AUDIT[(PG: audit)]
+    DECISION -->|Pipeline de Decisão| DB_DEC[(PG: decision)]
+
+    CQS -.->|Push Traces OTLP| OTEL
+    AUDIT -.->|Push Traces OTLP| OTEL
+    DECISION -.->|Push Traces OTLP| OTEL
+    
+    OTEL -->|Exporta via azuremonitor| APPINSIGHTS(Azure App Insights)
+
+    subgraph "Azure Postgres Flexible Server"
+        DB_CQS
+        DB_AUDIT
+        DB_DEC
+    end
+```
+
 ## Tecnologias e Infraestrutura
-- Java 21 + Virtual Threads
-- Spring Boot
+- Java 21 + Virtual Threads + Spring Boot
 - Resilience4j (Bulkhead, Circuit Breaker, Retry)
-- PostgreSQL
-- Apache Kafka + Confluent Schema Registry (Avro)
-- Docker Compose & WireMock (Para stubs)
-- Observabilidade: Jaeger, OpenTelemetry Collector, Prometheus e Micrometer
+- PostgreSQL (Azure Flexible Server)
+- Apache Kafka + Confluent Schema Registry (Avro) gerenciados na Confluent Cloud
+- Observabilidade: OpenTelemetry Collector, Azure App Insights, Prometheus e Jaeger
 - Testes de Carga: Grafana k6
+- Infraestrutura como Código: **Terraform**
+
+## Integração Cloud e CI/CD
+
+A infraestrutura foi automatizada e separada da entrega do código da seguinte forma:
+
+1. **Deploy da Infra (Terraform)**:
+   O Terraform no diretório `infra/terraform` é responsável por provisionar o Azure (Resource Group, Key Vault, Postgres, Container Apps) e a Confluent Cloud.
+   - **Gerenciamento de Estado**: Atualmente o estado do Terraform (`terraform.tfstate`) é mantido localmente. Por isso, **NÃO execute o Terraform Apply pelo GitHub Actions** sem antes migrar o backend para o Azure Storage. O apply deve ser feito da máquina de desenvolvimento.
+   - **Imagem Placeholder**: No primeiro provisionamento, o Terraform sobe os Container Apps das aplicações com uma imagem pública "fantasma" (`mcr.microsoft.com/k8se/quickstart:latest`). Isso evita a dependência cíclica (o Container App falhar por não ter a imagem do Azure Container Registry ainda vazio).
+
+2. **Deploy das Aplicações (GitHub Actions)**:
+   A pipeline (`.github/workflows/deploy.yml`) assume o controle a partir daí. Ela constrói as imagens (via `bootBuildImage` do Gradle), manda para o ACR criado pelo Terraform e usa o `az containerapp update` para substituir a imagem placeholder pelas imagens finais em Java.
+
+3. **Autenticação OIDC (Sem Senhas)**:
+   O GitHub Actions se comunica com o Azure através do Microsoft Entra ID usando **OIDC (OpenID Connect)**. Nenhuma senha de *Service Principal* é estocada no GitHub. Os Container Apps puxam segredos diretamente do Azure Key Vault internamente usando identidades gerenciadas.
 
 ## Como executar
 1. Suba a infraestrutura necessária (Postgres, Kafka, Schema Registry, WireMock):
