@@ -30,16 +30,15 @@ Com o **Transactional Outbox**, garantimos atomicidade: a tabela de outbox e o e
 
 **Trade-off**: risco de *hot partition* se um CPF concentrar volume desproporcional — aceitável para o domínio (consultas por pessoa não têm pico extremo); reavaliar se surgir gargalo.
 
-## 3. Tracing em Virtual Threads no Scatter-Gather
+## 3. Tracing em Virtual Threads no Scatter-Gather (RESOLVIDO — executor context-aware injetado)
 
-**Contexto**: O `CreditQueryService` (scatter-gather) dispara os adapters de bureaus utilizando `Executors.newVirtualThreadPerTaskExecutor()`. Gostaríamos de rastrear essas chamadas filhas no Jaeger sob um mesmo Span pai de orquestração.
+**Contexto**: O `CreditQueryService` (scatter-gather) dispara os adapters de bureaus em virtual threads. O contexto de tracing do Micrometer/OpenTelemetry vive em `ThreadLocal` e **não** se propaga nativamente para virtual threads criadas à mão — os spans dos bureaus ficavam órfãos do span da request.
 
-**A Decisão**: Deixamos as threads sem propagação automática do contexto de tracing no momento. O contexto do Micrometer/OpenTelemetry (via `ThreadLocal`) não se propaga nativamente para as virtual threads não gerenciadas pelo Spring.
+**A Decisão**: O `CreditQueryService` **não cria mais** o executor internamente; recebe um `Supplier<ExecutorService>` no construtor. O wiring (`UseCaseConfig`, no `bootstrap`) fornece um executor de virtual threads embrulhado por `ContextExecutorService` (`io.micrometer:context-propagation`), que captura um `ContextSnapshot` na thread da request e o restaura em cada virtual thread. Assim os spans dos bureaus (RestClient auto-instrumentado) ficam filhos do span da request.
 
-**Justificativa**: 
-Para propagar o contexto, precisaríamos utilizar os utilitários de Context Propagation do Micrometer (`ContextSnapshot` / `ContextPropagators`) dentro do `CreditQueryService`. Porém, esta classe reside no módulo `credit-hub-application`, que pela arquitetura hexagonal do projeto é **framework-free** e não deve depender do Micrometer ou Spring Actuator. Fazer o wrapping explícito das tarefas forçaria a inclusão de bibliotecas de infraestrutura na aplicação, quebrando a regra de ouro do design. 
+**Justificativa**: Isto preserva a regra de ouro: `credit-hub-application` continua **framework-free** — só enxerga `java.util.concurrent.ExecutorService` e `java.util.function.Supplier` (JDK puro). Todo o Micrometer fica confinado ao `bootstrap`. É exatamente o "executor context-aware proveniente do bootstrap" que a versão anterior desta decisão já apontava como saída correta. (As deps de Micrometer que uma sessão anterior havia adicionado ao módulo `application` — declaradas mas não usadas — foram removidas.)
 
-**Trade-off**: Perde-se a correlação automática de Spans pai/filho no Jaeger para as sub-tarefas do scatter-gather (as chamadas aos bureaus podem ficar desconectadas do span pai de entrada), mas preserva-se a pureza da aplicação. Caso a rastreabilidade exija a correlação fina, a criação do Span manual ("scatter-gather-bureaus") e a propagação de contexto deverão ser resolvidas no adapter/controller ANTES de invocar o serviço da aplicação, ou injetando um executor context-aware proveniente do adapter.
+**Trade-off / limitação conhecida**: A propagação depende do `ObservationThreadLocalAccessor` (registrado via ServiceLoader pelo `micrometer-observation`) estar ativo para carregar a `Observation` corrente; é o caminho padrão e confiável. Não há span manual "scatter-gather-bureaus" — a correlação vem da própria `Observation` da request restaurada nas threads. Validação fina (waterfall no Jaeger) só é observável em runtime com a stack de pé.
 
 ## 4. Pipeline de Observabilidade (OTel Collector + Prometheus + Jaeger)
 
@@ -51,3 +50,17 @@ Para propagar o contexto, precisaríamos utilizar os utilitários de Context Pro
 Esta é a arquitetura moderna recomendada pelo ecossistema OpenTelemetry para obter a aba Monitor (SPM) operante no Jaeger. O uso do OTel Collector desacopla a lógica de extração de métricas do código da aplicação, permitindo que a aplicação faça apenas um push (OTLP) e a infraestrutura cuide da derivação de métricas. A integração do Micrometer complementa a visão RED com métricas de infraestrutura (circuit breakers, db pools) no Prometheus. 
 
 **Trade-off**: Maior complexidade na infraestrutura local (Docker Compose) devido à inclusão de dois novos componentes (Collector e Prometheus), exigindo também a configuração de normalização de queries no Jaeger (`PROMETHEUS_QUERY_NORMALIZE_CALLS`). O benefício é uma malha de telemetria rica e pronta para produção.
+
+**Na nuvem (Azure)**: o Collector sobe como Container App próprio, lendo `infra/otel/otel-collector-config.cloud.yaml` (montado via Azure File). Lá não há Jaeger; o único destino é o exporter `azuremonitor` → **Application Insights**. As apps continuam fazendo push OTLP, só mudando o endpoint (`MANAGEMENT_OTLP_TRACING_ENDPOINT`) para o Collector interno. Escolhemos essa rota em vez do **agent Java do Application Insights** porque o agent **não suporta OTLP** e não coexiste com o exporter azuremonitor — brigaria com a instrumentação `micrometer-tracing-bridge-otel` já em uso.
+
+## 5. Continuidade de trace no Outbox store-and-forward (traceparent persistido)
+
+**Contexto**: O Outbox é store-and-forward: o `ConsultaController` grava a linha e **retorna**; o `OutboxRelay` publica ~2s depois numa thread do `@Scheduled`. Sem o `ThreadLocal` da request, o publish (e portanto `audit-service`/`decision-consumer`) nascia num **trace novo**, órfão da request original. É um problema de design, não de config.
+
+**A Decisão**: Persistimos o contexto de trace na própria linha da outbox. O `OutboxWriter` (ainda dentro da request) captura o span corrente e grava a coluna `traceparent` no formato **W3C** (`00-<traceId>-<spanId>-<flags>`). O `OutboxRelay`, ao publicar, **re-hidrata** esse contexto (`tracer.traceContextBuilder()`) e cria o span de publish como **filho** dele, executando o `send` dentro desse escopo. A observação do Kafka é habilitada (`spring.kafka.template.observation-enabled` no produtor; `spring.kafka.listener.observation-enabled` nos consumers) para que o header traceparent seja injetado/lido.
+
+**Gotcha**: a auto-instrumentação do produtor Kafka injeta o traceparent do contexto **atual**. Por isso re-hidratamos o contexto **antes** do `send` (escopo do span filho) em vez de escrever o header na mão — do contrário a instrumentação sobrescreveria com o contexto da thread do scheduler. Se não houver span na escrita, `traceparent` fica `null` e a publicação vira um trace novo (telemetria nunca quebra a request).
+
+**Trade-off (conhecido)**: Optamos por **parent-child**, que dá uma waterfall única e legível no Jaeger/App Insights — com um "buraco" de ~2s correspondente ao intervalo de polling. A alternativa semanticamente mais correta para assíncrono seriam **span links** (o consumer não está causalmente *dentro* da request, que já retornou), mas perde-se a waterfall contínua. Escolhemos legibilidade; a alternativa fica registrada.
+
+**Schema**: adiciona a coluna `traceparent` (nullable, 55 chars) na tabela `outbox`. Com `ddl-auto: update` a coluna nasce sozinha, sem migração manual — risco baixo por ser nullable e aditiva.
