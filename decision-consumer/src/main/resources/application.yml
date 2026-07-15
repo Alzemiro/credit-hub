@@ -13,6 +13,8 @@ spring:
       ddl-auto: update
   kafka:
     bootstrap-servers: localhost:9092
+    listener:
+      observation-enabled: true   # lê o traceparent do header e continua o trace da request original
     consumer:
       group-id: decision-service-group
       auto-offset-reset: earliest

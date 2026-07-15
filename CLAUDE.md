@@ -16,11 +16,19 @@ Decisão central: **não forçar Kafka no caminho síncrono** — a consulta res
 
 **Implementado:** 3 adapters de bureau + scatter-gather com agregação parcial; resiliência por bureau (bulkhead + circuit breaker + retry); Outbox + relay publicando Avro; `audit-service` (consumer idempotente); `decision-consumer` (`@RetryableTopic` + DLT). Observabilidade com OpenTelemetry (Tracing OTLP), Micrometer (Métricas) + Prometheus + Jaeger SPM. Testes de carga (k6). Stubs WireMock para sucesso, erro 500 e latência de 8s.
 
-**Ainda NÃO implementado (não descrever como se existisse):** `profile-service` / read model CQRS ("perfil mais recente por documento"); cache com TTL; deploy cloud (Confluent Cloud + Container Apps + Terraform). WireMock só existe via Docker Compose — **não** como dependência de teste (não há Testcontainers).
+**Ainda NÃO implementado (não descrever como se existisse):** `profile-service` / read model CQRS ("perfil mais recente por documento"); cache com TTL. WireMock agora é provisionado via Azure Container Apps apontando para `infra/wiremock/mappings`. Testcontainers ainda não são dependência de teste.
 
 ## Stack
 
 Java 21 (toolchain). Spring Boot **3.5.16**, `io.spring.dependency-management` 1.1.7, plugin Avro `com.github.davidmc24.gradle.plugin.avro` 1.9.1. Spring Kafka, Resilience4j (`resilience4j-spring-boot3` **2.2.0**), PostgreSQL 16, Confluent (Kafka 7.6.1 KRaft, Schema Registry 7.6.1), WireMock 3.9.1. Observabilidade: Jaeger 1.60, Prometheus 2.53, OpenTelemetry Collector Contrib 0.104.0. Testes: k6 0.52.0. `group = com.credithub`. Build: Gradle wrapper (sem Gradle instalado na máquina).
+
+**Cloud / Infraestrutura as Code:**
+- **Azure Container Apps**: Hospeda 5 serviços (credit-query-service, audit-service, decision-consumer, wiremock, **otel-collector**). Todos com `min=max=1` réplica (consumers fixos em 1 porque não há KEDA scale rule — >1 seria inerte — e por orçamento de conexões do B1ms). Imagem inicial das apps Spring é um **placeholder público** (`mcr.microsoft.com/k8se/quickstart:latest`) para evitar o chicken-and-egg do ACR vazio no 1º apply; o CD assume a imagem real e `ignore_changes` no `image` impede o TF de reverter.
+- **Azure PostgreSQL Flexible Server**: Tier Basic (`B1ms`), 3 databases. Conexão com `?sslmode=require`.
+- **Confluent Cloud**: Cluster Basic rodando na mesma região do Azure. Tópico principal `consulta-credito-event` com **6 partições** (paralelismo futuro + ordenação por CPF); retry/DLT com 1.
+- **Azure Key Vault**: fonte real dos segredos (`kafka-jaas`, `sr-auth`, `pg-password`) — os Container Apps referenciam via `key_vault_secret_id` + managed identity, não valores inline.
+- **Observabilidade cloud**: as apps fazem push OTLP para o **OTel Collector** (Container App interno), que exporta via `azuremonitor` para o **Application Insights**. Config em `infra/otel/otel-collector-config.cloud.yaml` (montada por Azure File). O agent Java do App Insights **não** é usado (não suporta OTLP; brigaria com a instrumentação atual).
+- **Terraform** + GitHub Actions (OIDC) para CI/CD. CD é dono da tag da imagem; Terraform, da config da infra.
 
 ## Arquitetura e regras de dependência
 
@@ -43,13 +51,16 @@ Regras não-negociáveis:
 
 ## Design não-óbvio já no código (não "conserte" sem entender)
 
-- **Adapters síncronos + deadline global (não há TimeLimiter).** A porta `CreditBureauPort` é síncrona e lança em falha. O `CreditQueryService` roda os bureaus com `Executors.newVirtualThreadPerTaskExecutor()` + `invokeAll(tasks, deadline)`; quem não terminar no deadline (`consulta.deadline-ms=3000`) é **cancelado** e entra em `indisponiveis`. **O timeout é responsabilidade do orquestrador, não de cada perna** — por isso o TimeLimiter e o split adapter/client de versões antigas foram removidos.
+- **Adapters síncronos + deadline global (não há TimeLimiter).** A porta `CreditBureauPort` é síncrona e lança em falha. O `CreditQueryService` roda os bureaus num executor de virtual threads (`invokeAll(tasks, deadline)`); quem não terminar no deadline (`consulta.deadline-ms=3000`) é **cancelado** e entra em `indisponiveis`. **O timeout é responsabilidade do orquestrador, não de cada perna** — por isso o TimeLimiter e o split adapter/client de versões antigas foram removidos.
+- **Executor injetado (context-aware), não criado na application.** O `CreditQueryService` recebe um `Supplier<ExecutorService>` no construtor; o `UseCaseConfig` (bootstrap) fornece um executor de virtual threads embrulhado por `ContextExecutorService` (micrometer context-propagation) que propaga o trace-context às threads — assim os spans dos bureaus ficam filhos do span da request. A `application` continua **framework-free** (só `java.util.concurrent`); o Micrometer fica no bootstrap (ver [DECISIONS.md](DECISIONS.md) item 3).
+- **Continuidade de trace no Outbox (traceparent).** A `OutboxEntity` tem a coluna `traceparent` (W3C, gravada pelo `OutboxWriter` dentro da request). O `OutboxRelay` re-hidrata esse contexto e publica como span filho, com a observação do Kafka habilitada (`observation-enabled` no producer/consumers) para propagar o header. Sem isso, `audit-service`/`decision-consumer` nasceriam num trace órfão (o relay roda ~2s depois, noutra thread). Ver [DECISIONS.md](DECISIONS.md) item 5.
 - **Sem `fallbackMethod` no adapter.** Em falha após a resiliência, a exceção sobe; o agregador conta o bureau como indisponível. A degradação é decidida na agregação (`Confianca.PARCIAL`/`INDISPONIVEL`), não por fallback local.
 - **Ordem dos aspectos: `Retry ( CircuitBreaker ( Bulkhead ( chamada ) ) )`.** Sem RateLimiter/TimeLimiter. `record-exceptions`/`retry-exceptions` cobrem só `RestClientException` e `IOException` — logo `BulkheadFullException` **não** abre o breaker nem é retentada (falha rápido → indisponível).
 - **Breaker/retry/bulkhead por bureau** (instances `serasa`/`quod`/`boavista` herdando de um `default` via `base-config`). Cada bulkhead é um semáforo isolado (`max-concurrent-calls: 8`, `max-wait-duration: 0`), então um bureau saturado não consome a capacidade dos outros.
 - **RestClient pinado em HTTP/1.1** (`BureauHttpConfig`, `JdkClientHttpRequestFactory` + `HttpClient.Version.HTTP_1_1`): o `HttpClient` do JDK trata o `RST_STREAM(CANCEL)` do WireMock sobre HTTP/2 como erro mesmo com resposta recebida.
-
-## Convenções de código
+- **Replicas do orquestrador (credit-query-service) travadas em `min=1, max=1`**. O `OutboxRelay` varre a tabela a cada 2s para publicação; se houver mais de uma réplica, todas fariam o mesmo `findAll()` em paralelo, duplicando eventos. Até a implementação de shedlock ou delete síncrono transacional, escalar é proibido.
+- **Separação CD vs Infra**: O CI/CD é dono da versão/tag da imagem (via `ignore_changes` no terraform), enquanto o Terraform controla a configuração da infra.
+- **Probes segregados**: O liveness aponta para a saúde da JVM local, enquanto o readiness aponta para o Actuator completo, desativando o tráfego do container caso o Kafka/Banco falhe, sem reiniciar o pod inutilmente.
 
 - **Eventos** nomeados no passado: `ConsultaCreditoRealizada`. Tópico `consulta-credito-event`. Serialização **Avro + Schema Registry** (`KafkaAvroSerializer`/`Deserializer`, `specific.avro.reader=true`). Campo `timestamp` é `timestamp-millis` → gerado como `java.time.Instant` (JSR310); converte-se para epoch-millis só na fronteira de persistência do `audit-service`.
 - **Chave de partição = CPF** (não `queryId`): mantém todas as consultas de um mesmo documento na mesma partição, preservando ordem para o futuro `profile-service`. O `queryId` fica no payload e é a chave de **dedup** do `audit-service` (ver [DECISIONS.md](DECISIONS.md)).

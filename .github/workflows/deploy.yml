@@ -1,0 +1,72 @@
+name: Build and Deploy to ACA
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'credit-hub-**'
+      - 'audit-service/**'
+      - 'decision-consumer/**'
+      - '.github/workflows/deploy.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+          
+      - name: Build and Test
+        run: ./gradlew build
+
+  docker-build-push-deploy:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+        
+      - name: Build and Push Docker Images
+        run: |
+          TAG=${GITHUB_SHA}
+          ACR=${{ secrets.ACR_NAME }}.azurecr.io
+          
+          # Using spring-boot plugin to build OCI images
+          ./gradlew :credit-hub-bootstrap:bootBuildImage --imageName=$ACR/credit-query-service:$TAG
+          docker push $ACR/credit-query-service:$TAG
+          
+          ./gradlew :audit-service:bootBuildImage --imageName=$ACR/audit-service:$TAG
+          docker push $ACR/audit-service:$TAG
+          
+          ./gradlew :decision-consumer:bootBuildImage --imageName=$ACR/decision-consumer:$TAG
+          docker push $ACR/decision-consumer:$TAG
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          TAG=${GITHUB_SHA}
+          ACR=${{ secrets.ACR_NAME }}.azurecr.io
+          RG=${{ secrets.AZURE_RG_NAME }}
+          
+          az containerapp update --name credithub-query-service --resource-group $RG --image $ACR/credit-query-service:$TAG
+          az containerapp update --name credithub-audit --resource-group $RG --image $ACR/audit-service:$TAG
+          az containerapp update --name credithub-decision --resource-group $RG --image $ACR/decision-consumer:$TAG

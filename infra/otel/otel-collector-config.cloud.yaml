@@ -1,0 +1,25 @@
+# Config do OTel Collector na nuvem (Azure Container Apps).
+# Diferente da config local (que faz fan-out p/ Jaeger + spanmetrics/Prometheus), aqui o unico
+# destino e o App Insights via exporter azuremonitor. Nao ha Jaeger na nuvem.
+# A connection string vem por env var (secret do container app) e e resolvida pelo ${env:...}.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  azuremonitor:
+    connection_string: "${env:APPLICATIONINSIGHTS_CONNECTION_STRING}"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [azuremonitor]

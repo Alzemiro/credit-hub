@@ -12,4 +12,8 @@ dependencies {
     implementation 'io.micrometer:micrometer-tracing-bridge-otel'
     implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
     implementation 'io.micrometer:micrometer-registry-prometheus'
+
+    // Propaga o trace-context às virtual threads do scatter-gather (executor context-aware
+    // montado em UseCaseConfig; mantém o módulo application framework-free).
+    implementation 'io.micrometer:context-propagation'
 }

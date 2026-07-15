@@ -13,6 +13,8 @@ spring:
       ddl-auto: update
   kafka:
     bootstrap-servers: localhost:9092
+    template:
+      observation-enabled: true   # injeta o traceparent do span atual (re-hidratado no relay) nos headers
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
