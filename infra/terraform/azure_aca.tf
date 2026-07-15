@@ -20,7 +20,7 @@ resource "azurerm_storage_share" "wiremock" {
 }
 
 resource "azurerm_storage_share_file" "mappings" {
-  for_each         = fileset("${path.module}/../wiremock/mappings", "*")
+  for_each         = setsubtract(fileset("${path.module}/../wiremock/mappings", "*"), [".gitkeep"])
   name             = each.key
   storage_share_id = azurerm_storage_share.wiremock.id
   source           = "${path.module}/../wiremock/mappings/${each.key}"
