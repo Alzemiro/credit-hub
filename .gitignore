@@ -21,3 +21,6 @@ override.tf.json
 terraform.rc
 .terraform.lock.hcl
 
+# Confluent CLI
+confluent.exe
+
