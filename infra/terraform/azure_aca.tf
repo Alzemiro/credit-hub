@@ -176,8 +176,11 @@ locals {
     {
       # Traces vao para o OTel Collector (container app), que faz fan-out p/ o exporter azuremonitor
       # (App Insights). App mantem a instrumentacao OTLP atual; so muda o endpoint de push.
-      name  = "MANAGEMENT_OTLP_TRACING_ENDPOINT"
-      value = "http://${azurerm_container_app.otel_collector.ingress[0].fqdn}/v1/traces"
+      name = "MANAGEMENT_OTLP_TRACING_ENDPOINT"
+      # https:// (443): o ingress do ACA termina TLS na borda e encaminha ao target_port
+      # 4318. Com http:// o ingress redireciona p/ https e o OkHttp do exporter OTLP quebra
+      # com "CLEARTEXT-only client" (nao segue o redirect por ser cleartext-only).
+      value = "https://${azurerm_container_app.otel_collector.ingress[0].fqdn}/v1/traces"
     },
     {
       name  = "MANAGEMENT_TRACING_SAMPLING_PROBABILITY"
@@ -304,6 +307,16 @@ resource "azurerm_container_app" "query_service" {
       # Probes
       # Readiness: verifica dependencias externas (Banco, Kafka). Deve falhar se dependencias off, cortando trafego web.
       # Liveness: verifica apenas se o processo local/JVM trava. Nao deve reiniciar a toa se Kafka falha (problema externo).
+      # Boot do Spring leva ~40s em 0.5 vCPU; sem startup_probe o liveness mata o
+      # container antes de ele subir (SIGTERM -> restart loop). O startup_probe
+      # suspende liveness/readiness ate a app responder, com folga (10x20s = 200s).
+      startup_probe {
+        transport               = "HTTP"
+        port                    = 8083
+        path                    = "/actuator/health/liveness"
+        interval_seconds        = 20
+        failure_count_threshold = 10
+      }
       liveness_probe {
         transport = "HTTP"
         port      = 8083
@@ -393,6 +406,13 @@ resource "azurerm_container_app" "audit_service" {
         value = data.confluent_schema_registry_cluster.sr.rest_endpoint
       }
       
+      startup_probe {
+        transport               = "HTTP"
+        port                    = 8084
+        path                    = "/actuator/health/liveness"
+        interval_seconds        = 20
+        failure_count_threshold = 10
+      }
       liveness_probe {
         transport = "HTTP"
         port      = 8084
@@ -486,6 +506,13 @@ resource "azurerm_container_app" "decision_consumer" {
         value = data.confluent_schema_registry_cluster.sr.rest_endpoint
       }
 
+      startup_probe {
+        transport               = "HTTP"
+        port                    = 8085
+        path                    = "/actuator/health/liveness"
+        interval_seconds        = 20
+        failure_count_threshold = 10
+      }
       liveness_probe {
         transport = "HTTP"
         port      = 8085

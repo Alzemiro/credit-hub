@@ -192,6 +192,22 @@ resource "confluent_api_key" "app_sr_api_key" {
   }
 }
 
+# O Schema Registry do Confluent Cloud autoriza via RBAC (role bindings), nao pelas ACLs
+# do Kafka. Sem isto a app conecta no SR mas recebe 40301 (denied Write) ao registrar o
+# schema. DeveloperWrite: produtor registra o schema; DeveloperRead: consumers (audit /
+# decision) leem o schema para desserializar. Escopo = todos os subjects do SR cluster.
+resource "confluent_role_binding" "app_sr_write" {
+  principal   = "User:${confluent_service_account.app.id}"
+  role_name   = "DeveloperWrite"
+  crn_pattern = "${data.confluent_schema_registry_cluster.sr.resource_name}/subject=*"
+}
+
+resource "confluent_role_binding" "app_sr_read" {
+  principal   = "User:${confluent_service_account.app.id}"
+  role_name   = "DeveloperRead"
+  crn_pattern = "${data.confluent_schema_registry_cluster.sr.resource_name}/subject=*"
+}
+
 locals {
   topics = [
     "consulta-credito-event",

@@ -1,14 +1,9 @@
 name: Build and Deploy to ACA
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'credit-hub-**'
-      - 'audit-service/**'
-      - 'decision-consumer/**'
-      - '.github/workflows/deploy.yml'
+  # Deploy 100% manual: nenhum push gera build. Dispare pela aba Actions
+  # (botao "Run workflow"), escolhendo a branch.
+  workflow_dispatch:
 
 permissions:
   id-token: write
