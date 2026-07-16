@@ -1,6 +1,9 @@
 name: Build and Deploy to ACA
 
 on:
+  # Disparo manual pela aba Actions (botao "Run workflow").
+  workflow_dispatch:
+  # Push na main so builda quando muda codigo/workflow; docs (README etc.) nao disparam.
   push:
     branches:
       - main
