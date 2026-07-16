@@ -45,14 +45,18 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Log in to Azure Container Registry
-        run: az acr login --name ${{ secrets.ACR_NAME }}
-        
+      - name: Resolve ACR name and login
+        run: |
+          # O nome do ACR tem sufixo aleatorio (random_string no TF), entao descobrimos
+          # pelo resource group em vez de depender de um secret fixo que quebra a cada
+          # recriacao. $ACR fica disponivel nos steps seguintes via GITHUB_ENV.
+          ACR_NAME=$(az acr list -g ${{ secrets.AZURE_RG_NAME }} --query "[0].name" -o tsv)
+          echo "ACR=$ACR_NAME.azurecr.io" >> $GITHUB_ENV
+          az acr login --name $ACR_NAME
+
       - name: Build and Push Docker Images
         run: |
           TAG=${GITHUB_SHA}
-          ACR=${{ secrets.ACR_NAME }}.azurecr.io
-          
           chmod +x gradlew
           
           # Using spring-boot plugin to build OCI images
@@ -68,7 +72,6 @@ jobs:
       - name: Deploy to Azure Container Apps
         run: |
           TAG=${GITHUB_SHA}
-          ACR=${{ secrets.ACR_NAME }}.azurecr.io
           RG=${{ secrets.AZURE_RG_NAME }}
           UAI=$(az identity show -n credithub-aca-identity -g $RG --query id -o tsv)
 
