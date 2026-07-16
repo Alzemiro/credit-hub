@@ -300,7 +300,7 @@ resource "azurerm_container_app" "query_service" {
       }
       env {
         name  = "SPRING_KAFKA_PRODUCER_PROPERTIES_SCHEMA_REGISTRY_URL"
-        value = confluent_schema_registry_cluster.sr.rest_endpoint
+        value = data.confluent_schema_registry_cluster.sr.rest_endpoint
       }
 
       # Probes
@@ -394,7 +394,7 @@ resource "azurerm_container_app" "audit_service" {
       }
       env {
         name  = "SPRING_KAFKA_CONSUMER_PROPERTIES_SCHEMA_REGISTRY_URL"
-        value = confluent_schema_registry_cluster.sr.rest_endpoint
+        value = data.confluent_schema_registry_cluster.sr.rest_endpoint
       }
       
       liveness_probe {
@@ -485,11 +485,11 @@ resource "azurerm_container_app" "decision_consumer" {
       }
       env {
         name  = "SPRING_KAFKA_CONSUMER_PROPERTIES_SCHEMA_REGISTRY_URL"
-        value = confluent_schema_registry_cluster.sr.rest_endpoint
+        value = data.confluent_schema_registry_cluster.sr.rest_endpoint
       }
       env {
         name  = "SPRING_KAFKA_PRODUCER_PROPERTIES_SCHEMA_REGISTRY_URL"
-        value = confluent_schema_registry_cluster.sr.rest_endpoint
+        value = data.confluent_schema_registry_cluster.sr.rest_endpoint
       }
 
       liveness_probe {

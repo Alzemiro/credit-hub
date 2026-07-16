@@ -8,7 +8,7 @@ resource "confluent_environment" "env" {
 
 resource "time_sleep" "wait_for_sr" {
   depends_on = [confluent_environment.env]
-  create_duration = "45s"
+  create_duration = "3m"
 }
 
 resource "confluent_kafka_cluster" "basic" {
@@ -167,20 +167,11 @@ resource "confluent_kafka_acl" "app_create_topic" {
   }
 }
 
-data "confluent_schema_registry_region" "sr_region" {
-  cloud   = "AZURE"
-  region  = "eastus"
-  package = "ESSENTIALS"
-}
-
-resource "confluent_schema_registry_cluster" "sr" {
-  package = data.confluent_schema_registry_region.sr_region.package
+data "confluent_schema_registry_cluster" "sr" {
   environment {
     id = confluent_environment.env.id
   }
-  region {
-    id = data.confluent_schema_registry_region.sr_region.id
-  }
+  depends_on = [time_sleep.wait_for_sr]
 }
 
 resource "confluent_api_key" "app_sr_api_key" {
@@ -192,9 +183,9 @@ resource "confluent_api_key" "app_sr_api_key" {
     kind        = confluent_service_account.app.kind
   }
   managed_resource {
-    id          = confluent_schema_registry_cluster.sr.id
-    api_version = confluent_schema_registry_cluster.sr.api_version
-    kind        = confluent_schema_registry_cluster.sr.kind
+    id          = data.confluent_schema_registry_cluster.sr.id
+    api_version = data.confluent_schema_registry_cluster.sr.api_version
+    kind        = data.confluent_schema_registry_cluster.sr.kind
     environment {
       id = confluent_environment.env.id
     }
