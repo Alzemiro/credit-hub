@@ -72,7 +72,7 @@ flowchart TB
 
 ### 2. Infraestrutura Cloud e CI/CD (Azure + Confluent)
 
-O sistema roda em **Azure Container Apps** com **Confluent Cloud** para Kafka/Schema Registry. O Terraform é dono da infraestrutura (state local); o GitHub Actions é dono da imagem (build + push no ACR + `az containerapp update`), autenticando via **OIDC** e resolvendo segredos por **Managed Identity** no Key Vault.
+O sistema roda em **Azure Container Apps** com **Confluent Cloud** para Kafka/Schema Registry. O Terraform é dono da infraestrutura (state local); o GitHub Actions é dono da imagem (build + push no ACR + `az containerapp update`), autenticando via **OIDC**. A Managed Identity dos Container Apps é usada para o **pull da imagem no ACR**; os segredos são populados no Key Vault pelo Terraform e injetados **inline** nos Container Apps (não lidos em runtime — ver [DECISIONS.md](DECISIONS.md) #7).
 
 ```mermaid
 flowchart TB
@@ -117,9 +117,9 @@ flowchart TB
     CQS -->|"produz (Avro)"| KAFKA
     KAFKA -->|consome| AUD
     KAFKA -->|consome| DEC
-    CQS -.->|"secrets via Managed Identity"| KV
-    AUD -.-> KV
-    DEC -.-> KV
+    KV -.->|"secrets inline (via Terraform)"| CQS
+    KV -.-> AUD
+    KV -.-> DEC
     CQS -.->|OTLP| OTEL
     AUD -.->|OTLP| OTEL
     DEC -.->|OTLP| OTEL
@@ -151,7 +151,7 @@ A infraestrutura foi automatizada e separada da entrega do código da seguinte f
    A pipeline (`.github/workflows/deploy.yml`) assume o controle a partir daí. Ela constrói as imagens (via `bootBuildImage` do Gradle), manda para o ACR criado pelo Terraform e usa o `az containerapp update` para substituir a imagem placeholder pelas imagens finais em Java.
 
 3. **Autenticação OIDC (Sem Senhas)**:
-   O GitHub Actions se comunica com o Azure através do Microsoft Entra ID usando **OIDC (OpenID Connect)**. Nenhuma senha de *Service Principal* é estocada no GitHub. Os Container Apps puxam segredos diretamente do Azure Key Vault internamente usando identidades gerenciadas.
+   O GitHub Actions se comunica com o Azure através do Microsoft Entra ID usando **OIDC (OpenID Connect)**. Nenhuma senha de *Service Principal* é estocada no GitHub. A Managed Identity dos Container Apps é usada para o **pull da imagem no ACR**; os segredos são populados no Key Vault pelo Terraform e injetados **inline** nos Container Apps — **não** lidos do Key Vault em runtime (o `secret.identity` dispara o bug de create do ACA; ver [DECISIONS.md](DECISIONS.md) #7).
 
 ## Guia de Deploy na Nuvem (Azure & Confluent)
 
