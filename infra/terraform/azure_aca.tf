@@ -156,10 +156,11 @@ resource "azurerm_container_app" "wiremock" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }
 
@@ -239,28 +240,27 @@ resource "azurerm_container_app" "query_service" {
   # A UAI precisa ter acesso de leitura ao KV antes da app tentar resolver os secrets.
   depends_on = [time_sleep.wait_for_identity]
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
-
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
+  # Secrets inline (value do KV), NAO key_vault_secret_id + identity: no create atomico do
+  # ACA a API valida o secret.identity (resolve a UAI) ANTES de persistir a associacao da
+  # identity ao app -> cai no fallback system-assigned (resource id = o proprio app) e falha
+  # com IdentityDoesNotExist. E ordem de validacao, nao propagacao (time_sleep nao resolve).
+  # Sem o campo identity o ACA nao resolve identity alguma no create. Os valores ja estao no
+  # state via azurerm_key_vault_secret, entao inline nao expoe nada novo; o KV segue como
+  # fonte (populado pelo TF) e a UAI fica so para o pull do ACR (registry set no CD). DECISIONS 7.
   secret {
-    name                = "kafka-jaas"
-    key_vault_secret_id = azurerm_key_vault_secret.kafka_jaas.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "kafka-jaas"
+    value = azurerm_key_vault_secret.kafka_jaas.value
   }
 
   secret {
-    name                = "sr-auth"
-    key_vault_secret_id = azurerm_key_vault_secret.sr_auth.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "sr-auth"
+    value = azurerm_key_vault_secret.sr_auth.value
   }
 
   secret {
-    name                = "pg-password"
-    key_vault_secret_id = azurerm_key_vault_secret.pg_password.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "pg-password"
+    value = azurerm_key_vault_secret.pg_password.value
   }
 
   ingress {
@@ -336,10 +336,11 @@ resource "azurerm_container_app" "query_service" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }
 
@@ -352,28 +353,27 @@ resource "azurerm_container_app" "audit_service" {
 
   depends_on = [time_sleep.wait_for_identity]
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
-
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
+  # Secrets inline (value do KV), NAO key_vault_secret_id + identity: no create atomico do
+  # ACA a API valida o secret.identity (resolve a UAI) ANTES de persistir a associacao da
+  # identity ao app -> cai no fallback system-assigned (resource id = o proprio app) e falha
+  # com IdentityDoesNotExist. E ordem de validacao, nao propagacao (time_sleep nao resolve).
+  # Sem o campo identity o ACA nao resolve identity alguma no create. Os valores ja estao no
+  # state via azurerm_key_vault_secret, entao inline nao expoe nada novo; o KV segue como
+  # fonte (populado pelo TF) e a UAI fica so para o pull do ACR (registry set no CD). DECISIONS 7.
   secret {
-    name                = "kafka-jaas"
-    key_vault_secret_id = azurerm_key_vault_secret.kafka_jaas.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "kafka-jaas"
+    value = azurerm_key_vault_secret.kafka_jaas.value
   }
 
   secret {
-    name                = "sr-auth"
-    key_vault_secret_id = azurerm_key_vault_secret.sr_auth.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "sr-auth"
+    value = azurerm_key_vault_secret.sr_auth.value
   }
 
   secret {
-    name                = "pg-password"
-    key_vault_secret_id = azurerm_key_vault_secret.pg_password.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "pg-password"
+    value = azurerm_key_vault_secret.pg_password.value
   }
 
   template {
@@ -432,10 +432,11 @@ resource "azurerm_container_app" "audit_service" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }
 
@@ -448,28 +449,27 @@ resource "azurerm_container_app" "decision_consumer" {
 
   depends_on = [time_sleep.wait_for_identity]
 
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
-
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
+  # Secrets inline (value do KV), NAO key_vault_secret_id + identity: no create atomico do
+  # ACA a API valida o secret.identity (resolve a UAI) ANTES de persistir a associacao da
+  # identity ao app -> cai no fallback system-assigned (resource id = o proprio app) e falha
+  # com IdentityDoesNotExist. E ordem de validacao, nao propagacao (time_sleep nao resolve).
+  # Sem o campo identity o ACA nao resolve identity alguma no create. Os valores ja estao no
+  # state via azurerm_key_vault_secret, entao inline nao expoe nada novo; o KV segue como
+  # fonte (populado pelo TF) e a UAI fica so para o pull do ACR (registry set no CD). DECISIONS 7.
   secret {
-    name                = "kafka-jaas"
-    key_vault_secret_id = azurerm_key_vault_secret.kafka_jaas.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "kafka-jaas"
+    value = azurerm_key_vault_secret.kafka_jaas.value
   }
 
   secret {
-    name                = "sr-auth"
-    key_vault_secret_id = azurerm_key_vault_secret.sr_auth.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "sr-auth"
+    value = azurerm_key_vault_secret.sr_auth.value
   }
 
   secret {
-    name                = "pg-password"
-    key_vault_secret_id = azurerm_key_vault_secret.pg_password.id
-    identity            = azurerm_user_assigned_identity.aca_identity.id
+    name  = "pg-password"
+    value = azurerm_key_vault_secret.pg_password.value
   }
 
   template {
@@ -532,9 +532,10 @@ resource "azurerm_container_app" "decision_consumer" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }

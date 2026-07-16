@@ -44,16 +44,17 @@ resource "azurerm_role_assignment" "acr_pull" {
   principal_id         = azurerm_user_assigned_identity.aca_identity.principal_id
 }
 
-# A UAI recem-criada leva alguns segundos para propagar no Entra ID; sem esperar, o ACA
-# valida a identity na criacao do Container App e recebe NotFound (IdentityDoesNotExist).
-# Espera tambem cobre a propagacao do role AcrPull e da access policy do KV.
+# A UAI recem-criada leva minutos para propagar no Entra ID; sem esperar, o ACA valida a
+# identity na criacao do Container App (identity block + secret.identity do KV) e recebe
+# NotFound (IdentityDoesNotExist). 60s nao bastam num apply fresco (UAI nova); 180s cobrem
+# a replicacao global do Entra ID + a propagacao do role AcrPull e da access policy do KV.
 resource "time_sleep" "wait_for_identity" {
   depends_on = [
     azurerm_user_assigned_identity.aca_identity,
     azurerm_role_assignment.acr_pull,
     azurerm_key_vault_access_policy.kv_aca
   ]
-  create_duration = "60s"
+  create_duration = "180s"
 }
 
 data "azurerm_client_config" "current" {}
