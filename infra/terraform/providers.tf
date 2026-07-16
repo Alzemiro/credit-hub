@@ -3,7 +3,7 @@ terraform {
   required_providers {
     confluent = {
       source  = "confluentinc/confluent"
-      version = "~> 1.72.0"
+      version = "~> 2.0"
     }
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -12,6 +12,10 @@ terraform {
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6.0"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.12.0"
     }
   }
 }

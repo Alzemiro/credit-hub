@@ -20,7 +20,7 @@ resource "azurerm_storage_share" "wiremock" {
 }
 
 resource "azurerm_storage_share_file" "mappings" {
-  for_each         = fileset("${path.module}/../wiremock/mappings", "*")
+  for_each         = setsubtract(fileset("${path.module}/../wiremock/mappings", "*"), [".gitkeep"])
   name             = each.key
   storage_share_id = azurerm_storage_share.wiremock.id
   source           = "${path.module}/../wiremock/mappings/${each.key}"
@@ -156,7 +156,10 @@ resource "azurerm_container_app" "wiremock" {
   }
 
   lifecycle {
-    ignore_changes = [template[0].container[0].image]
+    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
+    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
+    # registry set --identity` depois do create, quando a UAI ja esta associada.
+    ignore_changes = [template[0].container[0].image, registry]
   }
 }
 
@@ -231,16 +234,11 @@ resource "azurerm_container_app" "query_service" {
   revision_mode                = "Single"
 
   # A UAI precisa ter acesso de leitura ao KV antes da app tentar resolver os secrets.
-  depends_on = [azurerm_key_vault_access_policy.kv_aca]
+  depends_on = [time_sleep.wait_for_identity]
 
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
-
-  registry {
-    server   = azurerm_container_registry.acr.login_server
-    identity = azurerm_user_assigned_identity.aca_identity.id
   }
 
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
@@ -325,7 +323,10 @@ resource "azurerm_container_app" "query_service" {
   }
 
   lifecycle {
-    ignore_changes = [template[0].container[0].image]
+    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
+    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
+    # registry set --identity` depois do create, quando a UAI ja esta associada.
+    ignore_changes = [template[0].container[0].image, registry]
   }
 }
 
@@ -336,16 +337,11 @@ resource "azurerm_container_app" "audit_service" {
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
 
-  depends_on = [azurerm_key_vault_access_policy.kv_aca]
+  depends_on = [time_sleep.wait_for_identity]
 
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
-
-  registry {
-    server   = azurerm_container_registry.acr.login_server
-    identity = azurerm_user_assigned_identity.aca_identity.id
   }
 
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
@@ -416,7 +412,10 @@ resource "azurerm_container_app" "audit_service" {
   }
 
   lifecycle {
-    ignore_changes = [template[0].container[0].image]
+    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
+    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
+    # registry set --identity` depois do create, quando a UAI ja esta associada.
+    ignore_changes = [template[0].container[0].image, registry]
   }
 }
 
@@ -427,16 +426,11 @@ resource "azurerm_container_app" "decision_consumer" {
   resource_group_name          = azurerm_resource_group.rg.name
   revision_mode                = "Single"
 
-  depends_on = [azurerm_key_vault_access_policy.kv_aca]
+  depends_on = [time_sleep.wait_for_identity]
 
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
-
-  registry {
-    server   = azurerm_container_registry.acr.login_server
-    identity = azurerm_user_assigned_identity.aca_identity.id
   }
 
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
@@ -511,6 +505,9 @@ resource "azurerm_container_app" "decision_consumer" {
   }
 
   lifecycle {
-    ignore_changes = [template[0].container[0].image]
+    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
+    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
+    # registry set --identity` depois do create, quando a UAI ja esta associada.
+    ignore_changes = [template[0].container[0].image, registry]
   }
 }
