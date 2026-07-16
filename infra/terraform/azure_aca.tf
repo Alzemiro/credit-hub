@@ -156,10 +156,11 @@ resource "azurerm_container_app" "wiremock" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }
 
@@ -238,11 +239,6 @@ resource "azurerm_container_app" "query_service" {
 
   # A UAI precisa ter acesso de leitura ao KV antes da app tentar resolver os secrets.
   depends_on = [time_sleep.wait_for_identity]
-
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
 
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
   # Secrets inline (value do KV), NAO key_vault_secret_id + identity: no create atomico do
@@ -340,10 +336,11 @@ resource "azurerm_container_app" "query_service" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }
 
@@ -355,11 +352,6 @@ resource "azurerm_container_app" "audit_service" {
   revision_mode                = "Single"
 
   depends_on = [time_sleep.wait_for_identity]
-
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
 
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
   # Secrets inline (value do KV), NAO key_vault_secret_id + identity: no create atomico do
@@ -440,10 +432,11 @@ resource "azurerm_container_app" "audit_service" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }
 
@@ -455,11 +448,6 @@ resource "azurerm_container_app" "decision_consumer" {
   revision_mode                = "Single"
 
   depends_on = [time_sleep.wait_for_identity]
-
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.aca_identity.id]
-  }
 
   # Segredos resolvidos do Key Vault via managed identity (a UAI tem policy Get/List no KV).
   # Secrets inline (value do KV), NAO key_vault_secret_id + identity: no create atomico do
@@ -544,9 +532,10 @@ resource "azurerm_container_app" "decision_consumer" {
   }
 
   lifecycle {
-    # registry: o create do ACA falha (IdentityDoesNotExist) se o registry.identity for
-    # validado antes da UAI ser associada ao app. O CD (deploy.yml) faz `az containerapp
-    # registry set --identity` depois do create, quando a UAI ja esta associada.
-    ignore_changes = [template[0].container[0].image, registry]
+    # identity + registry: associar a UAI durante o create do ACA (bloco identity, ou
+    # registry.identity/secret.identity) dispara IdentityDoesNotExist — a UAI e validada antes
+    # de ser persistida a associacao ao app novo. O CD (deploy.yml) faz identity assign +
+    # registry set DEPOIS do create (update, onde e confiavel). Ver DECISIONS 7.
+    ignore_changes = [template[0].container[0].image, registry, identity]
   }
 }
