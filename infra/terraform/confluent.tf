@@ -1,5 +1,6 @@
 resource "confluent_environment" "env" {
   display_name = "${var.prefix}-env"
+  # Removido stream_governance interno porque ele tenta criar na mesma região (brazilsouth) que não tem suporte.
 }
 
 resource "confluent_kafka_cluster" "basic" {
@@ -110,7 +111,7 @@ resource "confluent_kafka_acl" "app_create_topic" {
 
 data "confluent_schema_registry_region" "sr_region" {
   cloud   = "AZURE"
-  region  = var.location
+  region  = "eastus" # Brazilsouth não possui Schema Registry nativo no Confluent Cloud!
   package = "ESSENTIALS"
 }
 
