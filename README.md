@@ -16,45 +16,114 @@ Para resolver problemas de dupla escrita, o sistema adota o padrão Transactiona
 - **audit-service**: Serviço consumidor idempotente, responsável por manter a trilha de auditoria.
 - **decision-consumer**: Consumidor de regras de negócio com resiliência baseada em @RetryableTopic (non-blocking retries) e envio para Dead Letter Topic (DLT) persistida em banco de dados.
 
-## Arquitetura Cloud e Diagrama
+## Diagramas de Arquitetura
 
-O sistema foi desenhado para rodar na nuvem utilizando **Azure Container Apps** e **Confluent Cloud** para Kafka. 
+### 1. Arquitetura da Aplicação (Spring / Hexagonal)
+
+O `credit-query-service` segue arquitetura hexagonal, com a dependência **sempre apontando para dentro** (`bootstrap → adapter → application → domain`). O hot path é **síncrono** (responde ao cliente sob um deadline global, sem depender do Kafka); a integração com os consumidores é **assíncrona** via Transactional Outbox.
 
 ```mermaid
-graph TD
-    Client((Client)) -->|POST /consultas| CQS[credit-query-service]
-    
-    subgraph "Azure Container Apps"
-        CQS
-        AUDIT[audit-service]
-        DECISION[decision-consumer]
-        OTEL[otel-collector]
-        WIREMOCK[wiremock]
+flowchart TB
+    Client([Cliente]) -->|"POST /consultas"| Controller
+
+    subgraph QueryService["credit-query-service — Hexagonal"]
+        direction TB
+        Controller["ConsultaController<br/><i>adapter.in.web</i>"]
+
+        subgraph Core["Núcleo (framework-free)"]
+            direction TB
+            UseCase["CreditQueryService<br/><i>application</i>"]
+            Domain["ConsultaConsolidada · Bureau · Confianca<br/><i>domain · Java puro</i>"]
+            BureauPort{{"CreditBureauPort"}}
+        end
+
+        subgraph OutAdapters["adapter.out"]
+            direction TB
+            Serasa["SerasaAdapter"]
+            Quod["QuodAdapter"]
+            BoaVista["BoaVistaAdapter"]
+            OutboxWriter["OutboxWriter"]
+        end
     end
 
-    CQS -->|REST Síncrono| WIREMOCK
-    CQS -->|Grava Outbox| DB_CQS[(PG: credithub)]
-    CQS -.->|Outbox Relay| KAFKA
-    
-    KAFKA{Confluent Cloud Kafka}
-    
-    KAFKA -->|Consome Eventos| AUDIT
-    KAFKA -->|Consome Eventos| DECISION
-    
-    AUDIT -->|Idempotência| DB_AUDIT[(PG: audit)]
-    DECISION -->|Pipeline de Decisão| DB_DEC[(PG: decision)]
+    Controller --> UseCase
+    UseCase --> Domain
+    UseCase -->|"scatter-gather · Virtual Threads<br/>invokeAll · deadline 3s"| BureauPort
+    BureauPort -.implementado por.-> Serasa & Quod & BoaVista
 
-    CQS -.->|Push Traces OTLP| OTEL
-    AUDIT -.->|Push Traces OTLP| OTEL
-    DECISION -.->|Push Traces OTLP| OTEL
-    
-    OTEL -->|Exporta via azuremonitor| APPINSIGHTS(Azure App Insights)
+    Serasa & Quod & BoaVista -->|"Retry(CircuitBreaker(Bulkhead))<br/>isolado por bureau · HTTP/1.1"| Bureaus[("Serasa / Quod / BoaVista<br/>(WireMock nos ambientes)")]
 
-    subgraph "Azure Postgres Flexible Server"
-        DB_CQS
-        DB_AUDIT
-        DB_DEC
+    UseCase -->|"grava evento na própria request"| OutboxWriter
+    OutboxWriter -->|"INSERT (+ traceparent W3C)"| OutboxTbl[("outbox")]
+
+    %% --- Espinha assíncrona ---
+    OutboxTbl -.->|"OutboxRelay · poll 2s<br/>ordenado por createdAt"| Kafka{{"Kafka · consulta-credito-event<br/>Avro + Schema Registry · chave = CPF"}}
+    Kafka -->|consome| Audit["audit-service<br/>idempotente (dedup por queryId)"]
+    Kafka -->|consome| Decision["decision-consumer<br/>@RetryableTopic → DLT"]
+    Audit --> AuditDB[("PG: audit")]
+    Decision -->|"poison → DLT"| DLT[("PG: decision")]
+
+    classDef port fill:#e8ecff,stroke:#5566dd,stroke-dasharray:4 2;
+    class BureauPort,Kafka port;
+```
+
+### 2. Infraestrutura Cloud e CI/CD (Azure + Confluent)
+
+O sistema roda em **Azure Container Apps** com **Confluent Cloud** para Kafka/Schema Registry. O Terraform é dono da infraestrutura (state local); o GitHub Actions é dono da imagem (build + push no ACR + `az containerapp update`), autenticando via **OIDC** e resolvendo segredos por **Managed Identity** no Key Vault.
+
+```mermaid
+flowchart TB
+    Dev([Desenvolvedor]) -->|"terraform apply (state local)"| TF["Terraform"]
+    Dev -->|"git push main"| GHA["GitHub Actions · deploy.yml<br/>OIDC (sem senha)"]
+    TF -.->|provisiona| Azure
+    TF -.->|provisiona| Confluent
+    GHA -->|"bootBuildImage + docker push"| ACR[("Azure Container Registry")]
+    GHA -->|"az containerapp update / registry set"| CQS
+
+    Cliente([Cliente]) -->|HTTPS| CQS
+
+    subgraph Azure["Microsoft Azure"]
+        direction TB
+        subgraph ACAENV["Azure Container Apps · min=max=1"]
+            direction LR
+            CQS["credit-query-service"]
+            AUD["audit-service"]
+            DEC["decision-consumer"]
+            WM["wiremock"]
+            OTEL["otel-collector"]
+        end
+        subgraph PGSRV["PostgreSQL Flexible · B1ms · sslmode=require"]
+            direction LR
+            DBc[("credithub")]
+            DBa[("audit")]
+            DBd[("decision")]
+        end
+        KV["Key Vault<br/>kafka-jaas · sr-auth · pg-password"]
+        AI["Application Insights"]
     end
+
+    subgraph Confluent["Confluent Cloud"]
+        KAFKA{{"Kafka Basic + Schema Registry<br/>consulta-credito-event · 6 partições"}}
+    end
+
+    ACR -.->|"pull via Managed Identity"| CQS
+    CQS -->|"REST síncrono"| WM
+    CQS --> DBc
+    AUD --> DBa
+    DEC --> DBd
+    CQS -->|"produz (Avro)"| KAFKA
+    KAFKA -->|consome| AUD
+    KAFKA -->|consome| DEC
+    CQS -.->|"secrets via Managed Identity"| KV
+    AUD -.-> KV
+    DEC -.-> KV
+    CQS -.->|OTLP| OTEL
+    AUD -.->|OTLP| OTEL
+    DEC -.->|OTLP| OTEL
+    OTEL -->|"exporter azuremonitor"| AI
+
+    classDef broker fill:#e8ecff,stroke:#5566dd,stroke-width:1px;
+    class KAFKA broker;
 ```
 
 ## Tecnologias e Infraestrutura
@@ -120,8 +189,7 @@ Vá na aba *Settings > Secrets and variables > Actions* do seu repositório e cr
 | `AZURE_CLIENT_ID` | O Client ID (App ID) gerado no Passo 1. |
 | `AZURE_TENANT_ID` | O Tenant ID da sua conta Azure (Passo 1). |
 | `AZURE_SUBSCRIPTION_ID` | O Subscription ID da sua conta Azure (Passo 1). |
-| `AZURE_RG_NAME` | Nome do Resource Group a ser criado pelo Terraform (ex: `credithub-rg`). |
-| `ACR_NAME` | Nome único global em letras minúsculas para o seu Container Registry (ex: `credithubacr99`). |
+| `AZURE_RG_NAME` | Nome do Resource Group a ser criado pelo Terraform (ex: `credithub-rg`). O CD descobre o ACR dentro dele automaticamente. |
 | `PG_PASSWORD` | Senha forte de administrador para o Postgres Flexible Server. |
 | `CONFLUENT_CLOUD_API_KEY` | Key do tipo "Cloud API Key" criada no painel web da Confluent Cloud. |
 | `CONFLUENT_CLOUD_API_SECRET` | Secret emparelhado com a API Key da Confluent. |
