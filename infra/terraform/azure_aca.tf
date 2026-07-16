@@ -309,13 +309,13 @@ resource "azurerm_container_app" "query_service" {
       # Liveness: verifica apenas se o processo local/JVM trava. Nao deve reiniciar a toa se Kafka falha (problema externo).
       # Boot do Spring leva ~40s em 0.5 vCPU; sem startup_probe o liveness mata o
       # container antes de ele subir (SIGTERM -> restart loop). O startup_probe
-      # suspende liveness/readiness ate a app responder, com folga (30x10s = 300s).
+      # suspende liveness/readiness ate a app responder, com folga (10x20s = 200s).
       startup_probe {
         transport               = "HTTP"
         port                    = 8083
         path                    = "/actuator/health/liveness"
-        interval_seconds        = 10
-        failure_count_threshold = 30
+        interval_seconds        = 20
+        failure_count_threshold = 10
       }
       liveness_probe {
         transport = "HTTP"
@@ -410,8 +410,8 @@ resource "azurerm_container_app" "audit_service" {
         transport               = "HTTP"
         port                    = 8084
         path                    = "/actuator/health/liveness"
-        interval_seconds        = 10
-        failure_count_threshold = 30
+        interval_seconds        = 20
+        failure_count_threshold = 10
       }
       liveness_probe {
         transport = "HTTP"
@@ -510,8 +510,8 @@ resource "azurerm_container_app" "decision_consumer" {
         transport               = "HTTP"
         port                    = 8085
         path                    = "/actuator/health/liveness"
-        interval_seconds        = 10
-        failure_count_threshold = 30
+        interval_seconds        = 20
+        failure_count_threshold = 10
       }
       liveness_probe {
         transport = "HTTP"
