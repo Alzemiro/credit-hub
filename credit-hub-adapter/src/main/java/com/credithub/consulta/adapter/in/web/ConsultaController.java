@@ -25,8 +25,10 @@ class ConsultaController {
 
     @PostMapping
     ConsultaConsolidada consultar(@RequestBody ConsultaRequest req) {
-        if (req == null || req.cpf() == null || req.cpf().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "cpf é obrigatório");
+        // Valida o formato (11 dígitos), não o dígito verificador: os CPFs de teste
+        // 00000000000/99999999999 não passam no DV, mas são cenários válidos (ver CLAUDE.md).
+        if (req == null || req.cpf() == null || !req.cpf().matches("\\d{11}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "cpf deve conter 11 dígitos");
         }
         ConsultaConsolidada consolidada = service.consultar(req.cpf());  // scatter-gather: fora de transação
         outboxWriter.registrar(consolidada);                            // transação curta: só o INSERT

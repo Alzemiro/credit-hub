@@ -120,8 +120,12 @@ resource "azurerm_container_app" "wiremock" {
 
   ingress {
     external_enabled = false
-    target_port      = 8080
-    transport        = "auto"
+    # Comunicacao interna em http: sem isto o ingress redireciona http->https e o RestClient
+    # dos bureaus (JDK HTTP/1.1, nao segue redirect) quebra -> os 3 bureaus viram INDISPONIVEL.
+    # Mesmo gatilho do OTLP (que foi resolvido usando https no endpoint); aqui mantemos http.
+    allow_insecure_connections = true
+    target_port                = 8080
+    transport                  = "auto"
     traffic_weight {
       percentage      = 100
       latest_revision = true
