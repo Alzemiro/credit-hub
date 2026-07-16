@@ -26,6 +26,12 @@ provider "azurerm" {
       purge_soft_delete_on_destroy    = true
       recover_soft_deleted_key_vaults = true
     }
+    # O Azure cria sozinho o action group "Application Insights Smart Detection" no RG,
+    # fora do Terraform. Sem esta flag o destroy do RG falha por conter recurso nao
+    # gerenciado; com ela, o TF deleta o RG via API limpando os aninhados.
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
   }
 }
 

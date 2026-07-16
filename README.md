@@ -24,16 +24,16 @@ O `credit-query-service` segue arquitetura hexagonal, com a dependência **sempr
 
 ```mermaid
 flowchart TB
-    Client([Cliente]) -->|"POST /consultas"| Controller
+    Client(["Cliente"]) -->|"POST /consultas"| Controller
 
     subgraph QueryService["credit-query-service — Hexagonal"]
         direction TB
-        Controller["ConsultaController<br/><i>adapter.in.web</i>"]
+        Controller["ConsultaController<br/>adapter.in.web"]
 
-        subgraph Core["Núcleo (framework-free)"]
+        subgraph Core["Nucleo (framework-free)"]
             direction TB
-            UseCase["CreditQueryService<br/><i>application</i>"]
-            Domain["ConsultaConsolidada · Bureau · Confianca<br/><i>domain · Java puro</i>"]
+            UseCase["CreditQueryService<br/>application"]
+            Domain["ConsultaConsolidada · Bureau · Confianca<br/>domain (Java puro)"]
             BureauPort{{"CreditBureauPort"}}
         end
 
@@ -48,22 +48,25 @@ flowchart TB
 
     Controller --> UseCase
     UseCase --> Domain
-    UseCase -->|"scatter-gather · Virtual Threads<br/>invokeAll · deadline 3s"| BureauPort
-    BureauPort -.implementado por.-> Serasa & Quod & BoaVista
+    UseCase -->|"scatter-gather · Virtual Threads · deadline 3s"| BureauPort
+    BureauPort -.->|"implementado por"| Serasa
+    BureauPort -.-> Quod
+    BureauPort -.-> BoaVista
 
-    Serasa & Quod & BoaVista -->|"Retry(CircuitBreaker(Bulkhead))<br/>isolado por bureau · HTTP/1.1"| Bureaus[("Serasa / Quod / BoaVista<br/>(WireMock nos ambientes)")]
+    Serasa -->|"Retry(CircuitBreaker(Bulkhead)) · HTTP/1.1"| Bureaus[("Serasa / Quod / BoaVista<br/>WireMock nos ambientes")]
+    Quod --> Bureaus
+    BoaVista --> Bureaus
 
-    UseCase -->|"grava evento na própria request"| OutboxWriter
+    UseCase -->|"grava evento na propria request"| OutboxWriter
     OutboxWriter -->|"INSERT (+ traceparent W3C)"| OutboxTbl[("outbox")]
 
-    %% --- Espinha assíncrona ---
-    OutboxTbl -.->|"OutboxRelay · poll 2s<br/>ordenado por createdAt"| Kafka{{"Kafka · consulta-credito-event<br/>Avro + Schema Registry · chave = CPF"}}
-    Kafka -->|consome| Audit["audit-service<br/>idempotente (dedup por queryId)"]
-    Kafka -->|consome| Decision["decision-consumer<br/>@RetryableTopic → DLT"]
+    OutboxTbl -.->|"OutboxRelay · poll 2s"| Kafka{{"Kafka · consulta-credito-event<br/>Avro + Schema Registry · chave = CPF"}}
+    Kafka -->|"consome"| Audit["audit-service<br/>idempotente (dedup por queryId)"]
+    Kafka -->|"consome"| Decision["decision-consumer<br/>@RetryableTopic + DLT"]
     Audit --> AuditDB[("PG: audit")]
-    Decision -->|"poison → DLT"| DLT[("PG: decision")]
+    Decision -->|"poison"| DLT[("PG: decision")]
 
-    classDef port fill:#e8ecff,stroke:#5566dd,stroke-dasharray:4 2;
+    classDef port fill:#e8ecff,stroke:#5566dd;
     class BureauPort,Kafka port;
 ```
 
