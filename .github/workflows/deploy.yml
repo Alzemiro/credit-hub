@@ -70,7 +70,15 @@ jobs:
           TAG=${GITHUB_SHA}
           ACR=${{ secrets.ACR_NAME }}.azurecr.io
           RG=${{ secrets.AZURE_RG_NAME }}
-          
+          UAI=$(az identity show -n credithub-aca-identity -g $RG --query id -o tsv)
+
+          # Configura o pull do ACR via UAI. Feito aqui (nao no Terraform) porque o create do
+          # ACA falha com IdentityDoesNotExist se registry.identity for validado antes da UAI
+          # ser associada. No update o app ja existe e a UAI ja esta associada -> sem o bug.
+          for APP in credithub-query-service credithub-audit credithub-decision; do
+            az containerapp registry set --name $APP --resource-group $RG --server $ACR --identity "$UAI"
+          done
+
           az containerapp update --name credithub-query-service --resource-group $RG --image $ACR/credit-query-service:$TAG
           az containerapp update --name credithub-audit --resource-group $RG --image $ACR/audit-service:$TAG
           az containerapp update --name credithub-decision --resource-group $RG --image $ACR/decision-consumer:$TAG
